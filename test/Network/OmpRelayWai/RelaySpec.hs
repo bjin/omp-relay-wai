@@ -101,7 +101,7 @@ guestPath = "/r/" <> roomId <> "?role=guest"
 withRelay :: (Int -> IO ()) -> IO ()
 withRelay action = do
     state <- newRelayState
-    testWithApplication (return $ app "." state) action
+    testWithApplication (return $ app state) action
 
 runClient :: Int -> String -> WS.ClientApp a -> IO a
 runClient port path = WS.runClient "127.0.0.1" port path

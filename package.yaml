@@ -12,9 +12,6 @@ category:            Web
 description:
   WAI application and hprox-compatible binary for the oh-my-pi collab relay.
 
-data-files:
-- dist/**/*
-
 flags:
   static:
     description: Enable static build
@@ -50,16 +47,15 @@ library:
   - base >= 4.12 && < 5
   - bytestring
   - containers
-  - directory
-  - filepath
+  - file-embed
   - hashable
   - hprox
   - http-types
-  - mime-types
   - text
   - time
   - unordered-containers
   - wai
+  - wai-app-static
   - wai-extra
   - wai-websockets
   - websockets
@@ -76,7 +72,6 @@ executables:
     - Network.OmpRelayWai.HProxConfig
     - Network.OmpRelayWai.Relay
     - Network.OmpRelayWai.Static
-    - Paths_omp_relay_wai
     ghc-options:
     - -threaded
     - -rtsopts
@@ -88,20 +83,18 @@ executables:
     - base >= 4.12 && < 5
     - bytestring
     - containers
-    - directory
-    - filepath
+    - file-embed
     - hashable
     - hprox
     - http-types
-    - mime-types
     - text
     - time
     - unordered-containers
     - wai
+    - wai-app-static
     - wai-extra
     - wai-websockets
     - websockets
-
 
 tests:
   omp-relay-wai-test:
@@ -118,8 +111,7 @@ tests:
     - base >= 4.12 && < 5
     - bytestring
     - containers
-    - directory
-    - filepath
+    - file-embed
     - hashable
     - hprox
     - hspec
@@ -130,6 +122,7 @@ tests:
     - time
     - unordered-containers
     - wai
+    - wai-app-static
     - wai-extra
     - wai-websockets
     - warp

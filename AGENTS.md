@@ -9,7 +9,7 @@ The executable reuses hprox CLI parsing and runtime behavior (`Network.HProx.get
 ## Runtime behavior
 
 - Static site assets are generated into `dist/` by `scripts/update-webui.sh`; `dist/` is ignored and intentionally not tracked.
-- `Paths_omp_relay_wai.getDataFileName "dist"` is used at runtime, so generated/installed layouts still need a `dist/` directory.
+- `dist/` is a compile-time input embedded into the binary by `file-embed`. Deployed servers only need the compiled executable; refreshing assets requires rerunning `scripts/update-webui.sh` and rebuilding.
 
 Generate `dist/` after a fresh checkout or when refreshing web assets:
 
@@ -31,7 +31,7 @@ After running the update script, `dist/index.html` must contain neither `um.can.
 - `src/Network/OmpRelayWai.hs` composes WebSocket relay and HTTP static fallback.
 - `src/Network/OmpRelayWai/Relay.hs` implements relay routing, room state, peer join/leave controls, close codes, and binary forwarding.
 - `src/Network/OmpRelayWai/Envelope.hs` implements the 4-byte peer-id envelope.
-- `src/Network/OmpRelayWai/Static.hs` serves `/healthz` and generated `dist/` files.
+- `src/Network/OmpRelayWai/Static.hs` serves `/healthz` and embedded generated `dist/` assets.
 - `src/Network/OmpRelayWai/HProxConfig.hs` sanitizes hprox config after parsing.
 - `app/Main.hs` wires hprox to this WAI app and prints sanitizer warnings.
 - `scripts/update-webui.sh` fetches/builds collab-web and patches deployment-specific metadata out of generated assets.
