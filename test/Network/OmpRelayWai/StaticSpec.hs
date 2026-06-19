@@ -6,13 +6,15 @@ module Network.OmpRelayWai.StaticSpec
   ( spec
   ) where
 
-import Data.ByteString      qualified as BS
-import Data.ByteString.Lazy qualified as LBS
+import Data.ByteString       qualified as BS
+import Data.ByteString.Char8 qualified as BS8
+import Data.ByteString.Lazy  qualified as LBS
 import Network.HTTP.Types
-    (hContentType, methodGet, methodHead, methodPost, status200, status404, status405)
-import Network.Mime         (defaultMimeLookup)
-import Network.Wai          (Application, Request(..))
-import Network.Wai.Test     qualified as WaiTest
+    (hContentLength, hContentType, methodGet, methodHead, methodPost, status200, status404,
+    status405)
+import Network.Mime          (defaultMimeLookup)
+import Network.Wai           (Application, Request(..))
+import Network.Wai.Test      qualified as WaiTest
 import Test.Hspec
 
 import Network.OmpRelayWai        (app, newRelayState)
@@ -85,6 +87,24 @@ spec = describe "Network.OmpRelayWai.Static" $ do
         WaiTest.simpleStatus indexResponse `shouldBe` status405
         lookup "Allow" (WaiTest.simpleHeaders indexResponse) `shouldBe` Just "GET, HEAD"
 
+    it "serves embedded assets with explicit content length" $ do
+        indexResponse <- runStaticRequest fixtureApp methodGet "/"
+        shouldHaveContentLength "<html>index</html>" indexResponse
+
+        appResponse <- runStaticRequest fixtureApp methodGet "/app.js"
+        shouldHaveContentLength "console.log('app');" appResponse
+
+        headResponse <- runStaticRequest fixtureApp methodHead "/app.js"
+        WaiTest.simpleBody headResponse `shouldBe` ""
+        shouldHaveContentLength "console.log('app');" headResponse
+
+    it "allows cross-origin mode asset loads" $ do
+        indexResponse <- runStaticRequest fixtureApp methodGet "/"
+        shouldHaveCorsAccess indexResponse
+
+        appResponse <- runStaticRequest fixtureApp methodGet "/app.js"
+        shouldHaveCorsAccess appResponse
+
     it "serves / from production embedded assets" $ do
         response <- runStaticRequest staticDistApp methodGet "/"
         WaiTest.simpleStatus response `shouldBe` status200
@@ -104,6 +124,15 @@ fixtureFiles =
     , ("app.js", "console.log('app');")
     , ("nested/file.txt", "nested text")
     ]
+
+shouldHaveContentLength :: BS.ByteString -> WaiTest.SResponse -> Expectation
+shouldHaveContentLength content response =
+    lookup hContentLength (WaiTest.simpleHeaders response) `shouldBe`
+        Just (BS8.pack $ show $ BS.length content)
+
+shouldHaveCorsAccess :: WaiTest.SResponse -> Expectation
+shouldHaveCorsAccess response =
+    lookup "Access-Control-Allow-Origin" (WaiTest.simpleHeaders response) `shouldBe` Just "*"
 
 runStaticRequest :: Application -> BS.ByteString -> BS.ByteString -> IO WaiTest.SResponse
 runStaticRequest testApp method path =
