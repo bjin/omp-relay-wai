@@ -36,6 +36,10 @@ After running the update script, `dist/index.html` must contain neither `um.can.
 - `app/Main.hs` wires hprox to this WAI app and prints sanitizer warnings.
 - `scripts/update-webui.sh` fetches/builds collab-web and patches deployment-specific metadata out of generated assets.
 
+## Haskell style
+
+Haskell source files must follow `HASKELL-STYLE.md` closely. Run `stylish-haskell` first, then review and adjust the result manually against the style guide.
+
 ## Reference implementation
 
 Use the TypeScript local relay in `can1357/oh-my-pi` as the protocol source of truth:

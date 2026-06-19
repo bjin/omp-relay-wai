@@ -1,3 +1,7 @@
+-- SPDX-License-Identifier: Apache-2.0
+--
+-- Copyright (C) 2026 Bin Jin. All Rights Reserved.
+
 module Main
   ( main
   ) where
@@ -10,6 +14,7 @@ import Network.OmpRelayWai             (app, newRelayState)
 import Network.OmpRelayWai.HProxConfig (HProxConfigSanitization(..), sanitizeHproxConfig)
 import Paths_omp_relay_wai             (getDataFileName)
 
+-- | Run the hprox-compatible relay executable.
 main :: IO ()
 main = do
     config <- getConfig

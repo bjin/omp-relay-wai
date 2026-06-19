@@ -1,20 +1,25 @@
+-- SPDX-License-Identifier: Apache-2.0
+--
+-- Copyright (C) 2026 Bin Jin. All Rights Reserved.
+
 module Network.OmpRelayWai.EnvelopeSpec
   ( spec
   ) where
 
 import Data.ByteString qualified as BS
 
-import Network.OmpRelayWai.Envelope
-
 import Test.Hspec
 
+import Network.OmpRelayWai.Envelope
+
+-- | Envelope parser and renderer behavior.
 spec :: Spec
 spec = describe "Network.OmpRelayWai.Envelope" $ do
     it "round-trips rendered peer id and payload" $ do
         let payload = BS.pack [10, 20, 30]
         parseEnvelope (renderEnvelope (PeerId 7) payload) `shouldBe`
             Just Envelope
-                { envelopePeerId = PeerId 7
+                { envelopePeerId  = PeerId 7
                 , envelopePayload = payload
                 }
 

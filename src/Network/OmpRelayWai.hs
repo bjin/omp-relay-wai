@@ -1,3 +1,7 @@
+-- SPDX-License-Identifier: Apache-2.0
+--
+-- Copyright (C) 2026 Bin Jin. All Rights Reserved.
+
 module Network.OmpRelayWai
   ( RelayState
   , app
@@ -11,6 +15,7 @@ import Network.WebSockets             qualified as WS
 import Network.OmpRelayWai.Relay
 import Network.OmpRelayWai.Static
 
+-- | Compose the WebSocket relay and static file WAI application.
 app :: FilePath -> RelayState -> Application
 app distDir state = websocketsOr WS.defaultConnectionOptions (relayServerApp state) httpFallback
   where

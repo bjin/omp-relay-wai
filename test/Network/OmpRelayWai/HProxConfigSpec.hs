@@ -1,13 +1,18 @@
+-- SPDX-License-Identifier: Apache-2.0
+--
+-- Copyright (C) 2026 Bin Jin. All Rights Reserved.
+
 module Network.OmpRelayWai.HProxConfigSpec
   ( spec
   ) where
 
 import Network.HProx (Config(..), defaultConfig)
 
-import Network.OmpRelayWai.HProxConfig
-
 import Test.Hspec
 
+import Network.OmpRelayWai.HProxConfig
+
+-- | hprox configuration sanitization behavior.
 spec :: Spec
 spec = describe "Network.OmpRelayWai.HProxConfig" $ do
     it "clears configured websocket redirect and reports it" $ do
@@ -25,9 +30,10 @@ spec = describe "Network.OmpRelayWai.HProxConfig" $ do
         ignoredCatchAllRev `shouldBe` False
 
     it "removes catch-all reverse proxy routes and reports them" $ do
-        let catchAll = (Nothing, "/", "127.0.0.1:8080")
-            prefixed = (Nothing, "/api/", "127.0.0.1:8081")
+        let catchAll     = (Nothing, "/", "127.0.0.1:8080")
+            prefixed     = (Nothing, "/api/", "127.0.0.1:8081")
             domainScoped = (Just "example.com", "/", "127.0.0.1:8082")
+
             (sanitized, HProxConfigSanitization{..}) =
                 sanitizeHproxConfig defaultConfig { _rev = [catchAll, prefixed, domainScoped] }
         _rev sanitized `shouldBe` [prefixed, domainScoped]
@@ -36,6 +42,7 @@ spec = describe "Network.OmpRelayWai.HProxConfig" $ do
 
     it "treats normalized root reverse proxy prefixes as catch-all routes" $ do
         let catchAll = (Nothing, "///", "127.0.0.1:8080")
+
             (sanitized, HProxConfigSanitization{..}) =
                 sanitizeHproxConfig defaultConfig { _rev = [catchAll] }
         _rev sanitized `shouldBe` []

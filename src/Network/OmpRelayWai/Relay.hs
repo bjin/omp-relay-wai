@@ -1,3 +1,7 @@
+-- SPDX-License-Identifier: Apache-2.0
+--
+-- Copyright (C) 2026 Bin Jin. All Rights Reserved.
+
 module Network.OmpRelayWai.Relay
   ( ClientRole(..)
   , RelayRequest(..)
@@ -28,23 +32,28 @@ import Network.WebSockets      qualified as WS
 
 import Network.OmpRelayWai.Envelope
 
+-- | Mutable state for active relay rooms.
 data RelayState = RelayState
     { relayRooms :: !(MVar (HashMap.HashMap RoomId Room))
     }
 
+-- | Room key accepted in @/r/<roomId>@ relay routes.
 newtype RoomId = RoomId { unRoomId :: BS.ByteString }
-    deriving (Eq, Show)
+  deriving (Eq, Show)
 
 instance Hashable RoomId where
     hashWithSalt salt (RoomId roomId) = hashWithSalt salt roomId
 
+-- | Role requested by a WebSocket client.
 data ClientRole = HostRole | GuestRole
-    deriving (Eq, Show)
+  deriving (Eq, Show)
 
+-- | Parsed relay route with room and role.
 data RelayRequest = RelayRequest
     { relayRequestRoomId :: !RoomId
     , relayRequestRole   :: !ClientRole
-    } deriving (Eq, Show)
+    }
+  deriving (Eq, Show)
 
 data Room = Room
     { roomToken  :: !Unique
@@ -63,18 +72,21 @@ data RelayClient = RelayClient
     , relayClientSendLock   :: !(MVar ())
     }
 
+-- | Allocate an empty relay state.
 newRelayState :: IO RelayState
 newRelayState = RelayState <$> newMVar HashMap.empty
 
+-- | Parse a relay route and role from WAI path/query bytes.
 parseRelayRequest :: BS.ByteString -> BS.ByteString -> Maybe RelayRequest
 parseRelayRequest path rawQuery = do
     roomId <- parseRelayRoomPath path
     role <- parseRole $ stripLeadingQuestion rawQuery
     return RelayRequest
         { relayRequestRoomId = roomId
-        , relayRequestRole = role
+        , relayRequestRole   = role
         }
 
+-- | Serve relay WebSocket requests.
 relayServerApp :: RelayState -> WS.ServerApp
 relayServerApp state pending =
     case parseRelayPendingRequest pending of
@@ -86,6 +98,7 @@ relayServerApp state pending =
                 HostRole  -> openHost state relayRequestRoomId client
                 GuestRole -> openGuest state relayRequestRoomId client
 
+-- | Return the relay-specific response for non-WebSocket HTTP requests.
 relayHttpFallback :: Application
 relayHttpFallback request respond =
     respond $ case parseRelayRequest (rawPathInfo request) (rawQueryString request) of
@@ -159,7 +172,8 @@ openGuest state roomId client = do
                     live <- roomStillLive state roomId liveRoom
                     if live
                     then do
-                        sendTextClient (roomHost liveRoom) $ peerJoinedMessage (relayClientPeerId guestClient)
+                        sendTextClient (roomHost liveRoom) $
+                            peerJoinedMessage (relayClientPeerId guestClient)
                         runClientUntilClose (cleanupGuest state roomId liveRoom guestClient) $
                             guestReceiveLoop liveRoom guestClient
                     else do
@@ -170,12 +184,12 @@ createRoom :: RelayClient -> IO Room
 createRoom host = do
     token <- newUnique
     guests <- newMVar RoomGuests
-        { roomGuestMap = IntMap.empty
+        { roomGuestMap   = IntMap.empty
         , roomNextPeerId = 1
         }
     return Room
-        { roomToken = token
-        , roomHost = host
+        { roomToken  = token
+        , roomHost   = host
         , roomGuests = guests
         }
 
@@ -183,9 +197,9 @@ newRelayClient :: PeerId -> WS.Connection -> IO RelayClient
 newRelayClient peerId conn = do
     sendLock <- newMVar ()
     return RelayClient
-        { relayClientPeerId = peerId
+        { relayClientPeerId     = peerId
         , relayClientConnection = conn
-        , relayClientSendLock = sendLock
+        , relayClientSendLock   = sendLock
         }
 
 lookupRoom :: RelayState -> RoomId -> IO (Maybe Room)
@@ -203,17 +217,19 @@ insertGuest Room{..} client = modifyMVar roomGuests $ \guests@RoomGuests{..} ->
     if roomNextPeerId > fromIntegral (maxBound :: Word32)
     then return (guests, Nothing)
     else do
-        let peerId = PeerId $ fromIntegral roomNextPeerId
-            guest = client { relayClientPeerId = peerId }
+        let peerId     = PeerId $ fromIntegral roomNextPeerId
+            guest      = client { relayClientPeerId = peerId }
             nextGuests = RoomGuests
-                { roomGuestMap = IntMap.insert (peerIdKey peerId) guest roomGuestMap
+                { roomGuestMap   = IntMap.insert (peerIdKey peerId) guest roomGuestMap
                 , roomNextPeerId = roomNextPeerId + 1
                 }
         return (nextGuests, Just guest)
 
 removeGuestSilently :: Room -> RelayClient -> IO ()
 removeGuestSilently Room{..} RelayClient{..} = modifyMVar roomGuests $ \guests@RoomGuests{..} ->
-    let nextGuests = guests { roomGuestMap = IntMap.delete (peerIdKey relayClientPeerId) roomGuestMap }
+    let nextGuests = guests
+            { roomGuestMap = IntMap.delete (peerIdKey relayClientPeerId) roomGuestMap
+            }
     in return (nextGuests, ())
 
 hostReceiveLoop :: Room -> IO ()
@@ -264,7 +280,7 @@ cleanupHost RelayState{..} roomId room@Room{ roomGuests = guestsVar } = do
     when removed $ do
         guests <- modifyMVar guestsVar $ \RoomGuests{..} ->
             let nextGuests = RoomGuests
-                    { roomGuestMap = IntMap.empty
+                    { roomGuestMap   = IntMap.empty
                     , roomNextPeerId = roomNextPeerId
                     }
             in return (nextGuests, IntMap.elems roomGuestMap)
@@ -273,7 +289,7 @@ cleanupHost RelayState{..} roomId room@Room{ roomGuests = guestsVar } = do
 cleanupGuest :: RelayState -> RoomId -> Room -> RelayClient -> IO ()
 cleanupGuest state roomId room@Room{..} RelayClient{..} = do
     removed <- modifyMVar roomGuests $ \guests@RoomGuests{..} ->
-        let key = peerIdKey relayClientPeerId
+        let key        = peerIdKey relayClientPeerId
             wasPresent = IntMap.member key roomGuestMap
             nextGuests = guests { roomGuestMap = IntMap.delete key roomGuestMap }
         in return (nextGuests, wasPresent)
@@ -315,16 +331,17 @@ ignoreConnectionException _ = return ()
 
 rejectNotFound :: WS.PendingConnection -> IO ()
 rejectNotFound pending = WS.rejectRequestWith pending WS.defaultRejectRequest
-    { WS.rejectCode = 404
+    { WS.rejectCode    = 404
     , WS.rejectMessage = "Not Found"
-    , WS.rejectBody = "not found"
+    , WS.rejectBody    = "not found"
     }
 
 notFoundResponse :: Response
 notFoundResponse = responseLBS (mkStatus 404 "Not Found") [] "not found"
 
 upgradeRequiredResponse :: Response
-upgradeRequiredResponse = responseLBS (mkStatus 426 "Upgrade Required") [] "websocket upgrade required"
+upgradeRequiredResponse =
+    responseLBS (mkStatus 426 "Upgrade Required") [] "websocket upgrade required"
 
 peerJoinedMessage :: PeerId -> BS.ByteString
 peerJoinedMessage = peerMessage "peer-joined"

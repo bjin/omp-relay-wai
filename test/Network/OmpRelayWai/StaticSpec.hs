@@ -1,3 +1,7 @@
+-- SPDX-License-Identifier: Apache-2.0
+--
+-- Copyright (C) 2026 Bin Jin. All Rights Reserved.
+
 module Network.OmpRelayWai.StaticSpec
   ( spec
   ) where
@@ -12,11 +16,11 @@ import Network.Wai.Test   qualified as WaiTest
 import System.Directory
     (createDirectory, createDirectoryIfMissing, getTemporaryDirectory, removePathForcibly)
 import System.FilePath    ((</>))
+import Test.Hspec
 
 import Network.OmpRelayWai.Static
 
-import Test.Hspec
-
+-- | Static file application behavior.
 spec :: Spec
 spec = describe "Network.OmpRelayWai.Static" $ do
     it "serves /healthz" $
@@ -53,8 +57,8 @@ spec = describe "Network.OmpRelayWai.Static" $ do
         withTempDist $ \distDir -> do
             let request = WaiTest.defaultRequest
                     { requestMethod = methodGet
-                    , rawPathInfo = "/../index.html"
-                    , pathInfo = ["..", "index.html"]
+                    , rawPathInfo   = "/../index.html"
+                    , pathInfo      = ["..", "index.html"]
                     }
             response <- WaiTest.runSession (WaiTest.request request) (staticDistApp distDir)
             WaiTest.simpleStatus response `shouldBe` status404

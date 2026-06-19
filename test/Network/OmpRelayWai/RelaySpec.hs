@@ -1,3 +1,7 @@
+-- SPDX-License-Identifier: Apache-2.0
+--
+-- Copyright (C) 2026 Bin Jin. All Rights Reserved.
+
 module Network.OmpRelayWai.RelaySpec
   ( spec
   ) where
@@ -13,11 +17,11 @@ import Network.HTTP.Types       (mkStatus, status404)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.WebSockets       qualified as WS
 import System.Timeout           (timeout)
+import Test.Hspec
 
 import Network.OmpRelayWai (app, newRelayState)
 
-import Test.Hspec
-
+-- | WebSocket relay integration behavior.
 spec :: Spec
 spec = describe "Network.OmpRelayWai.Relay" $ do
     it "closes a guest that joins before the host" $
