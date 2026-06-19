@@ -1,0 +1,127 @@
+name:                omp-relay-wai
+version:             0.0.1
+github:              "bjin/omp-relay-wai"
+license:             Apache-2.0
+author:              "Bin Jin"
+maintainer:          "bjin@protonmail.com"
+copyright:           "2026 Bin Jin"
+
+synopsis:            WAI collab relay for oh-my-pi
+category:            Web
+
+description:
+  WAI application and hprox-compatible binary for the oh-my-pi collab relay.
+
+data-files:
+- dist/**/*
+
+default-extensions:
+- ImportQualifiedPost
+- OverloadedStrings
+- RecordWildCards
+
+ghc-options:
+- -Wall
+- -Wcompat
+- -Widentities
+- -Wincomplete-record-updates
+- -Wincomplete-uni-patterns
+- -Wmissing-export-lists
+- -Wmissing-home-modules
+- -Wpartial-fields
+- -Wredundant-constraints
+
+library:
+  source-dirs: src
+  exposed-modules:
+  - Network.OmpRelayWai
+  other-modules:
+  - Network.OmpRelayWai.Envelope
+  - Network.OmpRelayWai.HProxConfig
+  - Network.OmpRelayWai.Relay
+  - Network.OmpRelayWai.Static
+  dependencies:
+  - base >= 4.12 && < 5
+  - bytestring
+  - containers
+  - directory
+  - filepath
+  - hashable
+  - hprox
+  - http-types
+  - mime-types
+  - text
+  - time
+  - unordered-containers
+  - wai
+  - wai-extra
+  - wai-websockets
+  - websockets
+
+executables:
+  omp-relay-wai:
+    main: Main.hs
+    source-dirs:
+    - app
+    - src
+    other-modules:
+    - Network.OmpRelayWai
+    - Network.OmpRelayWai.Envelope
+    - Network.OmpRelayWai.HProxConfig
+    - Network.OmpRelayWai.Relay
+    - Network.OmpRelayWai.Static
+    - Paths_omp_relay_wai
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - base >= 4.12 && < 5
+    - bytestring
+    - containers
+    - directory
+    - filepath
+    - hashable
+    - hprox
+    - http-types
+    - mime-types
+    - text
+    - time
+    - unordered-containers
+    - wai
+    - wai-extra
+    - wai-websockets
+    - websockets
+
+
+tests:
+  omp-relay-wai-test:
+    main: Spec.hs
+    source-dirs:
+    - test
+    - src
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - async
+    - base >= 4.12 && < 5
+    - bytestring
+    - containers
+    - directory
+    - filepath
+    - hashable
+    - hprox
+    - hspec
+    - http-client
+    - http-types
+    - mime-types
+    - text
+    - time
+    - unordered-containers
+    - wai
+    - wai-extra
+    - wai-websockets
+    - warp
+    - websockets

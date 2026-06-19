@@ -1,0 +1,35 @@
+steps:
+  - module_header:
+      indent: 2
+      sort: true
+      separate_lists: false
+      break_where: exports
+      open_bracket: next_line
+  - simple_align:
+      cases: always
+      top_level_patterns: always
+      records: always
+      multi_way_if: always
+  - imports:
+      align: group
+      list_align: after_alias
+      pad_module_names: true
+      long_list_align: new_line
+      empty_list_align: inherit
+      list_padding: 4
+      separate_lists: false
+      space_surround: false
+      post_qualify: true
+      group_imports: false
+      group_rules:
+        - match: ".*"
+          sub_group: "^[^.]+"
+  - language_pragmas:
+      style: vertical
+      align: true
+      remove_redundant: true
+      language_prefix: LANGUAGE
+  - trailing_whitespace: {}
+columns: 100
+newline: lf
+cabal: true
