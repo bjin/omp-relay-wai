@@ -1,0 +1,101 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-x86_64-static:
+    name: Build Linux x86_64 static binary
+    runs-on: ubuntu-24.04
+    env:
+      DOCKER_REPO: benz0li/ghc-musl:9.10.3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Prepare Stack Docker environment
+        run: |
+          docker pull "$DOCKER_REPO"
+          docker create --name stack-docker "$DOCKER_REPO"
+          docker cp stack-docker:/usr/local/bin/stack ./stack
+          docker rm stack-docker
+          chmod +x ./stack
+          grep -F resolver stack.yaml | tee .stackage-resolver
+
+      - name: Restore Stack cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.stack
+          key: stack-linux-x86_64-${{ hashFiles('.stackage-resolver', 'stack.yaml.lock') }}
+          restore-keys: |
+            stack-linux-x86_64-${{ hashFiles('.stackage-resolver') }}-
+            stack-linux-x86_64-
+
+      - name: Build web UI assets
+        run: ./scripts/update-webui.sh
+
+      - name: Build static executable
+        run: |
+          ./stack \
+              --no-terminal --no-interleaved-output --system-ghc --no-install-ghc \
+              --docker --docker-repo "$DOCKER_REPO" --docker-stack-exe image --no-docker-auto-pull \
+              install --flag omp-relay-wai:static --flag hprox:static --flag hprox:quic \
+              --ghc-options -split-sections --ghc-options -O --ghc-options -optc-Os
+
+      - name: Test embedded web UI
+        run: |
+          ./stack \
+              --no-terminal --no-interleaved-output --system-ghc --no-install-ghc \
+              --docker --docker-repo "$DOCKER_REPO" --docker-stack-exe image --no-docker-auto-pull \
+              test --flag omp-relay-wai:static --flag hprox:static --flag hprox:quic \
+              --ghc-options -split-sections --ghc-options -O --ghc-options -optc-Os
+
+      - name: Package executable
+        id: package
+        run: |
+          release_dir="$RUNNER_TEMP/release"
+          binary_path=".stack-work/docker/_home/.local/bin/omp-relay-wai"
+          version="$(git describe --tags --always | sed 's/^v//;s/-\([^-]*-g\)/-r\1/')"
+          archive_name="omp-relay-wai-${version}-linux-x86_64-static.tar.gz"
+          archive_path="$release_dir/$archive_name"
+
+          test -x "$binary_path"
+          mkdir -p "$release_dir"
+          tar czvf "$archive_path" -C "$(dirname "$binary_path")" "$(basename "$binary_path")"
+
+          echo "archive_name=$archive_name" >> "$GITHUB_OUTPUT"
+          echo "archive_path=$archive_path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.archive_name }}
+          path: ${{ steps.package.outputs.archive_path }}
+          if-no-files-found: error
+
+      - name: Create prerelease
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          generate_release_notes: true
+          files: ${{ steps.package.outputs.archive_path }}
+
+      - name: Cleanup Stack cache
+        if: always()
+        run: rm -rf ~/.stack/pantry/hackage
