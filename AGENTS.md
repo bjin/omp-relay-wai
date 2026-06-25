@@ -9,13 +9,19 @@ The executable reuses hprox CLI parsing and runtime behavior (`Network.HProx.get
 ## Runtime behavior
 
 - Static site assets are generated into `dist/` by `scripts/update-webui.sh`; `dist/` is ignored and intentionally not tracked.
+- `omp/` is a pinned git submodule for `can1357/oh-my-pi`; local source changes are stored as tracked patches in `omp-patches/`.
 - `dist/` is a compile-time input embedded into the binary by `file-embed`. Deployed servers only need the compiled executable; refreshing assets requires rerunning `scripts/update-webui.sh` and rebuilding.
 
 Generate `dist/` after a fresh checkout or when refreshing web assets:
 
 ```sh
-OH_MY_PI_REPO=https://github.com/can1357/oh-my-pi.git OH_MY_PI_REF=main scripts/update-webui.sh
+git submodule update --init -- omp
+scripts/update-webui.sh          # build from the pinned submodule commit
+scripts/update-webui.sh --master # first move omp/ to latest upstream master/main
+scripts/update-webui.sh --release # first move omp/ to latest v*.*.* release tag
 ```
+
+Regenerate local patch files with `scripts/prepare-patchess.py`; it resets `omp/`, rewrites the local customizations, writes `omp-patches/*.patch`, then resets `omp/` back to a clean checkout.
 
 After running the update script, `dist/index.html` must contain neither `um.can.ac` nor `https://my.omp.sh/`, `dist/robots.txt` must contain no `my.omp.sh`, and `dist/sitemap.xml` must not exist.
 
@@ -34,7 +40,7 @@ After running the update script, `dist/index.html` must contain neither `um.can.
 - `src/Network/OmpRelayWai/Static.hs` serves `/healthz` and embedded generated `dist/` assets.
 - `src/Network/OmpRelayWai/HProxConfig.hs` sanitizes hprox config after parsing.
 - `app/Main.hs` wires hprox to this WAI app and prints sanitizer warnings.
-- `scripts/update-webui.sh` fetches/builds collab-web and patches deployment-specific metadata out of generated assets.
+- `scripts/update-webui.sh` initializes/builds the pinned `omp/` submodule with `omp-patches/` applied.
 
 ## Haskell style
 

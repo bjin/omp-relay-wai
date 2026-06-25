@@ -1,0 +1,3 @@
+[submodule "omp"]
+	path = omp
+	url = https://github.com/can1357/oh-my-pi.git

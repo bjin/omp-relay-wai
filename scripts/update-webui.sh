@@ -1,46 +1,117 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OH_MY_PI_REPO="${OH_MY_PI_REPO:-https://github.com/can1357/oh-my-pi.git}"
-OH_MY_PI_REF="${OH_MY_PI_REF:-main}"
+usage() {
+  cat <<'USAGE'
+Usage: scripts/update-webui.sh [--master|--release]
+
+Build dist/ from the pinned omp/ submodule commit by default.
+
+Options:
+  --master   update omp/ to the latest upstream default branch commit
+  --release  update omp/ to the latest v*.*.* release tag
+USAGE
+}
+
+die() {
+  printf 'update-webui.sh: %s\n' "$*" >&2
+  exit 1
+}
+
+update_mode=pinned
+while (($#)); do
+  case "$1" in
+    --master)
+      [[ "$update_mode" == pinned ]] || {
+        usage >&2
+        exit 2
+      }
+      update_mode=master
+      ;;
+    --release)
+      [[ "$update_mode" == pinned ]] || {
+        usage >&2
+        exit 2
+      }
+      update_mode=release
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
-source_repo=$OH_MY_PI_REPO
-if [[ "$source_repo" != *"://"* && "$source_repo" != git@* && -e "$repo_root/$source_repo" ]]; then
-  source_repo=$(cd -- "$repo_root/$source_repo" && pwd -P)
-fi
+omp_dir="$repo_root/omp"
+patch_dir="$repo_root/omp-patches"
+collab_dist="$omp_dir/packages/collab-web/dist"
 
-checkout_dir=$(mktemp -d)
-trap 'rm -rf "$checkout_dir"' EXIT
+ensure_clean_submodule() {
+  local status
+  status=$(git -C "$omp_dir" status --porcelain --untracked-files=normal)
+  [[ -z "$status" ]] || die "omp/ has local changes; reset or commit them before updating webui"
+}
 
-git -C "$checkout_dir" init
-git -C "$checkout_dir" remote add origin "$source_repo"
-git -C "$checkout_dir" sparse-checkout set --no-cone \
-  '/package.json' \
-  '/bun.lock' \
-  '/bunfig.toml' \
-  '/tsconfig.base.json' \
-  '/tsconfig.json' \
-  '/packages/tsconfig.workspace.json' \
-  '/packages/*/package.json' \
-  '/packages/collab-web/**' \
-  '/packages/wire/**' \
-  '/python/robomp/web/package.json' \
-  '/patches/**'
-git -C "$checkout_dir" fetch --depth=1 origin "$OH_MY_PI_REF"
-git -C "$checkout_dir" checkout --detach FETCH_HEAD
+checkout_master() {
+  local branch=master
 
-bun install --cwd "$checkout_dir" --frozen-lockfile --ignore-scripts
-bun --cwd="$checkout_dir/packages/collab-web" run build
+  if git -C "$omp_dir" ls-remote --exit-code --heads origin master >/dev/null 2>&1; then
+    branch=master
+  elif git -C "$omp_dir" ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
+    branch=main
+  else
+    die "origin has neither master nor main"
+  fi
 
-rm -rf "$repo_root/dist"
-mkdir -p "$repo_root/dist"
-cp -a "$checkout_dir/packages/collab-web/dist/." "$repo_root/dist/"
+  git -C "$omp_dir" fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
+  git -C "$omp_dir" checkout --detach "origin/$branch"
+}
 
-python3 - "$repo_root/dist" <<'PY'
+checkout_latest_release() {
+  local latest_tag=
+  local tag
+
+  git -C "$omp_dir" fetch --tags --prune origin
+  while IFS= read -r tag; do
+    if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      latest_tag=$tag
+      break
+    fi
+  done < <(git -C "$omp_dir" tag --list 'v*.*.*' --sort=-v:refname)
+
+  [[ -n "$latest_tag" ]] || die "no v*.*.* release tag found"
+  git -C "$omp_dir" checkout --detach "$latest_tag"
+}
+
+cleanup_omp() {
+  git -C "$omp_dir" reset --hard -q HEAD >/dev/null 2>&1 || true
+  rm -rf "$collab_dist"
+}
+
+apply_patches() {
+  shopt -s nullglob
+  local patches=("$patch_dir"/*.patch)
+  shopt -u nullglob
+
+  ((${#patches[@]} > 0)) || die "no patches found in omp-patches/"
+
+  local patch
+  for patch in "${patches[@]}"; do
+    printf 'Applying %s\n' "${patch#$repo_root/}"
+    git -C "$omp_dir" apply --whitespace=nowarn "$patch"
+  done
+}
+
+validate_dist() {
+  python3 - "$repo_root/dist" <<'PY'
 from pathlib import Path
-import re
 import sys
 
 dist = Path(sys.argv[1])
@@ -48,50 +119,17 @@ index_path = dist / "index.html"
 robots_path = dist / "robots.txt"
 sitemap_path = dist / "sitemap.xml"
 
-index = index_path.read_text(encoding="utf-8")
-index = re.sub(
-    r"\s*<script\b(?=[^>]*\bsrc=[\"']https://um\.can\.ac/script\.js[\"'])[^>]*>\s*</script>\s*",
-    "\n",
-    index,
-    flags=re.IGNORECASE,
-)
-index = re.sub(
-    r"\s*<link\b(?=[^>]*\brel=[\"']canonical[\"'])(?=[^>]*\bhref=[\"']https://my\.omp\.sh/[\"'])[^>]*>\s*",
-    "\n",
-    index,
-    flags=re.IGNORECASE,
-)
-index = re.sub(
-    r"\s*<meta\b(?=[^>]*(?:property|name)=[\"'](?:og:url|twitter:url)[\"'])(?=[^>]*\bcontent=[\"']https://my\.omp\.sh/[\"'])[^>]*>\s*",
-    "\n",
-    index,
-    flags=re.IGNORECASE,
-)
-index = re.sub(
-    r"\s*<script\b(?=[^>]*\btype=[\"']application/ld\+json[\"'])[^>]*>.*?</script>\s*",
-    "\n",
-    index,
-    flags=re.IGNORECASE | re.DOTALL,
-)
-index = index.replace("https://my.omp.sh/og-image.png", "/og-image.png")
-index_path.write_text(index, encoding="utf-8")
-
-if robots_path.exists():
-    robots = robots_path.read_text(encoding="utf-8")
-    robots = robots.replace(
-        "Sitemap: https://my.omp.sh/sitemap.xml",
-        "# Sitemap intentionally omitted: deployment host is selected at runtime.",
-    )
-    robots_path.write_text(robots, encoding="utf-8")
-
-sitemap_path.unlink(missing_ok=True)
-
 failures = []
-index_after = index_path.read_text(encoding="utf-8")
-if "um.can.ac" in index_after:
-    failures.append("dist/index.html still contains um.can.ac")
-if "https://my.omp.sh/" in index_after:
-    failures.append("dist/index.html still contains https://my.omp.sh/")
+
+if not index_path.is_file():
+    failures.append("dist/index.html is missing")
+else:
+    index = index_path.read_text(encoding="utf-8")
+    if "um.can.ac" in index:
+        failures.append("dist/index.html still contains um.can.ac")
+    if "https://my.omp.sh/" in index:
+        failures.append("dist/index.html still contains https://my.omp.sh/")
+
 if robots_path.exists() and "my.omp.sh" in robots_path.read_text(encoding="utf-8"):
     failures.append("dist/robots.txt still contains my.omp.sh")
 if sitemap_path.exists():
@@ -102,3 +140,30 @@ if failures:
         print(failure, file=sys.stderr)
     sys.exit(1)
 PY
+}
+
+git -C "$repo_root" submodule update --init -- omp
+[[ -e "$omp_dir/.git" ]] || die "omp/ is not an initialized git submodule"
+
+ensure_clean_submodule
+case "$update_mode" in
+  master)
+    checkout_master
+    ;;
+  release)
+    checkout_latest_release
+    ;;
+esac
+ensure_clean_submodule
+
+trap cleanup_omp EXIT
+apply_patches
+
+bun install --cwd "$omp_dir" --frozen-lockfile --ignore-scripts
+bun --cwd="$omp_dir/packages/collab-web" run build
+
+rm -rf "$repo_root/dist"
+mkdir -p "$repo_root/dist"
+cp -a "$collab_dist/." "$repo_root/dist/"
+
+validate_dist
