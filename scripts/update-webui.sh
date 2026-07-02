@@ -52,6 +52,7 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 omp_dir="$repo_root/omp"
 patch_dir="$repo_root/omp-patches"
 collab_dist="$omp_dir/packages/collab-web/dist"
+relay_source="packages/collab-web/scripts/local-relay.ts"
 
 ensure_clean_submodule() {
   local status
@@ -88,6 +89,31 @@ checkout_latest_release() {
 
   [[ -n "$latest_tag" ]] || die "no v*.*.* release tag found"
   git -C "$omp_dir" checkout --detach "$latest_tag"
+}
+
+warn_on_relay_source_changes() {
+  local before_commit=$1
+  local after_commit=$2
+  local diff_status=0
+
+  [[ "$before_commit" != "$after_commit" ]] || return 0
+
+  git -C "$omp_dir" diff --quiet "$before_commit" "$after_commit" -- "$relay_source" || diff_status=$?
+  case "$diff_status" in
+    0)
+      return 0
+      ;;
+    1)
+      ;;
+    *)
+      die "failed to compare $relay_source between $before_commit and $after_commit"
+      ;;
+  esac
+
+  printf '\nWARNING: %s changed between %s and %s.\n' \
+    "$relay_source" "${before_commit:0:12}" "${after_commit:0:12}" >&2
+  printf 'Review the WAI WebSocket relay implementation before deploying these assets.\n\n' >&2
+  git -C "$omp_dir" diff --no-ext-diff "$before_commit" "$after_commit" -- "$relay_source"
 }
 
 cleanup_omp() {
@@ -146,6 +172,7 @@ git -C "$repo_root" submodule update --init -- omp
 [[ -e "$omp_dir/.git" ]] || die "omp/ is not an initialized git submodule"
 
 ensure_clean_submodule
+base_omp_commit=$(git -C "$omp_dir" rev-parse HEAD)
 case "$update_mode" in
   master)
     checkout_master
@@ -154,7 +181,9 @@ case "$update_mode" in
     checkout_latest_release
     ;;
 esac
+selected_omp_commit=$(git -C "$omp_dir" rev-parse HEAD)
 ensure_clean_submodule
+warn_on_relay_source_changes "$base_omp_commit" "$selected_omp_commit"
 
 trap cleanup_omp EXIT
 apply_patches
