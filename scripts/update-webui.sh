@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+msg() {
+  echo "[*] $*" >&2
+}
+
+warn() {
+  echo "WARNING: $*" >&2
+}
+
+fail() {
+  echo "[*] $*" >&2
+  exit 1
+}
+
+cmd() {
+  echo "[$] $*" >&2
+  "$@"
+}
+
 usage() {
   cat <<'USAGE'
 Usage: scripts/update-webui.sh [--master|--release]
@@ -13,23 +31,18 @@ Options:
 USAGE
 }
 
-die() {
-  printf 'update-webui.sh: %s\n' "$*" >&2
-  exit 1
-}
-
 update_mode=pinned
 while (($#)); do
   case "$1" in
     --master)
-      [[ "$update_mode" == pinned ]] || {
+      [[ $update_mode == pinned ]] || {
         usage >&2
         exit 2
       }
       update_mode=master
       ;;
     --release)
-      [[ "$update_mode" == pinned ]] || {
+      [[ $update_mode == pinned ]] || {
         usage >&2
         exit 2
       }
@@ -57,7 +70,7 @@ relay_source="packages/collab-web/scripts/local-relay.ts"
 ensure_clean_submodule() {
   local status
   status=$(git -C "$omp_dir" status --porcelain --untracked-files=normal)
-  [[ -z "$status" ]] || die "omp/ has local changes; reset or commit them before updating webui"
+  [[ -z $status ]] || fail "omp/ has local changes; reset or commit them before updating webui"
 }
 
 checkout_master() {
@@ -68,27 +81,27 @@ checkout_master() {
   elif git -C "$omp_dir" ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
     branch=main
   else
-    die "origin has neither master nor main"
+    fail "origin has neither master nor main"
   fi
 
-  git -C "$omp_dir" fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
-  git -C "$omp_dir" checkout --detach "origin/$branch"
+  cmd git -C "$omp_dir" fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
+  cmd git -C "$omp_dir" checkout --detach "origin/$branch"
 }
 
 checkout_latest_release() {
   local latest_tag=
   local tag
 
-  git -C "$omp_dir" fetch --tags --prune origin
+  cmd git -C "$omp_dir" fetch --tags --prune origin
   while IFS= read -r tag; do
-    if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       latest_tag=$tag
       break
     fi
   done < <(git -C "$omp_dir" tag --list 'v*.*.*' --sort=-v:refname)
 
-  [[ -n "$latest_tag" ]] || die "no v*.*.* release tag found"
-  git -C "$omp_dir" checkout --detach "$latest_tag"
+  [[ -n $latest_tag ]] || fail "no v*.*.* release tag found"
+  cmd git -C "$omp_dir" checkout --detach "$latest_tag"
 }
 
 warn_on_relay_source_changes() {
@@ -96,7 +109,7 @@ warn_on_relay_source_changes() {
   local after_commit=$2
   local diff_status=0
 
-  [[ "$before_commit" != "$after_commit" ]] || return 0
+  [[ $before_commit != "$after_commit" ]] || return 0
 
   git -C "$omp_dir" diff --quiet "$before_commit" "$after_commit" -- "$relay_source" || diff_status=$?
   case "$diff_status" in
@@ -106,14 +119,13 @@ warn_on_relay_source_changes() {
     1)
       ;;
     *)
-      die "failed to compare $relay_source between $before_commit and $after_commit"
+      fail "failed to compare $relay_source between $before_commit and $after_commit"
       ;;
   esac
 
-  printf '\nWARNING: %s changed between %s and %s.\n' \
-    "$relay_source" "${before_commit:0:12}" "${after_commit:0:12}" >&2
-  printf 'Review the WAI WebSocket relay implementation before deploying these assets.\n\n' >&2
-  git -C "$omp_dir" diff --no-ext-diff "$before_commit" "$after_commit" -- "$relay_source"
+  warn "$relay_source changed between ${before_commit:0:12} and ${after_commit:0:12}."
+  warn "Review the WAI WebSocket relay implementation before deploying these assets."
+  cmd git -C "$omp_dir" diff --no-ext-diff "$before_commit" "$after_commit" -- "$relay_source"
 }
 
 cleanup_omp() {
@@ -126,12 +138,12 @@ apply_patches() {
   local patches=("$patch_dir"/*.patch)
   shopt -u nullglob
 
-  ((${#patches[@]} > 0)) || die "no patches found in omp-patches/"
+  ((${#patches[@]} > 0)) || fail "no patches found in omp-patches/"
 
   local patch
   for patch in "${patches[@]}"; do
-    printf 'Applying %s\n' "${patch#$repo_root/}"
-    git -C "$omp_dir" apply --whitespace=nowarn "$patch"
+    msg "Applying ${patch#"$repo_root"/}"
+    cmd git -C "$omp_dir" apply --whitespace=nowarn "$patch"
   done
 }
 
@@ -168,8 +180,8 @@ if failures:
 PY
 }
 
-git -C "$repo_root" submodule update --init -- omp
-[[ -e "$omp_dir/.git" ]] || die "omp/ is not an initialized git submodule"
+cmd git -C "$repo_root" submodule update --init -- omp
+[[ -e "$omp_dir/.git" ]] || fail "omp/ is not an initialized git submodule"
 
 ensure_clean_submodule
 base_omp_commit=$(git -C "$omp_dir" rev-parse HEAD)
@@ -188,11 +200,11 @@ warn_on_relay_source_changes "$base_omp_commit" "$selected_omp_commit"
 trap cleanup_omp EXIT
 apply_patches
 
-bun install --cwd "$omp_dir" --frozen-lockfile --ignore-scripts
-bun --cwd="$omp_dir/packages/collab-web" run build
+cmd bun install --cwd "$omp_dir" --frozen-lockfile --ignore-scripts
+cmd bun --cwd="$omp_dir/packages/collab-web" run build
 
-rm -rf "$repo_root/dist"
-mkdir -p "$repo_root/dist"
-cp -a "$collab_dist/." "$repo_root/dist/"
+cmd rm -rf "$repo_root/dist"
+cmd mkdir -p "$repo_root/dist"
+cmd cp -a "$collab_dist/." "$repo_root/dist/"
 
 validate_dist
