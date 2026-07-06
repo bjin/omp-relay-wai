@@ -4,11 +4,15 @@
 
 module Network.OmpRelayWai.Relay
   ( ClientRole(..)
+  , RelayConfig(..)
   , RelayRequest(..)
   , RelayState
   , RoomId(..)
+  , defaultRelayConfig
   , newRelayState
+  , newRelayStateWith
   , parseRelayRequest
+  , relayConnectionOptions
   , relayHttpFallback
   , relayServerApp
   ) where
@@ -21,6 +25,7 @@ import Data.ByteString.Builder qualified as Builder
 import Data.ByteString.Lazy    qualified as LBS
 import Data.Hashable           (Hashable(..))
 import Data.HashMap.Strict     qualified as HashMap
+import Data.Int                (Int64)
 import Data.IntMap.Strict      qualified as IntMap
 import Data.List               (find)
 import Data.Unique             (Unique, newUnique)
@@ -34,7 +39,34 @@ import Network.OmpRelayWai.Envelope
 
 -- | Mutable state for active relay rooms.
 data RelayState = RelayState
-    { relayRooms :: !(MVar (HashMap.HashMap RoomId Room))
+    { relayRooms  :: !(MVar (HashMap.HashMap RoomId Room))
+    , relayConfig :: !RelayConfig
+    }
+
+-- | Tunable relay limits. Production uses 'defaultRelayConfig'; tests shrink
+-- the values to exercise limit behavior quickly.
+data RelayConfig = RelayConfig
+    { relayPingIntervalSeconds :: !Int
+      -- ^ Server-initiated WebSocket ping period. Must stay well below warp's
+      -- 30-second slowloris timeout, which stays armed during raw sessions.
+    , relayMaxMessageBytes     :: !Int64
+      -- ^ Incoming frame and message size limit (matches Bun's default
+      -- @maxPayloadLength@ on the reference relay).
+    , relayMaxSendQueueBytes   :: !Int
+      -- ^ Per-client outbound backlog cap in payload bytes; exceeding it
+      -- force-disconnects the client (uWS @maxBackpressure@ analog).
+    , relayMaxSendQueueLength  :: !Int
+      -- ^ Per-client outbound backlog cap in messages.
+    }
+  deriving (Eq, Show)
+
+-- | Production relay limits.
+defaultRelayConfig :: RelayConfig
+defaultRelayConfig = RelayConfig
+    { relayPingIntervalSeconds = 15
+    , relayMaxMessageBytes     = 16 * 1024 * 1024
+    , relayMaxSendQueueBytes   = 4 * 1024 * 1024
+    , relayMaxSendQueueLength  = 4096
     }
 
 -- | Room key accepted in @/r/<roomId>@ relay routes.
@@ -72,9 +104,28 @@ data RelayClient = RelayClient
     , relayClientSendLock   :: !(MVar ())
     }
 
--- | Allocate an empty relay state.
+-- | Allocate an empty relay state with production limits.
 newRelayState :: IO RelayState
-newRelayState = RelayState <$> newMVar HashMap.empty
+newRelayState = newRelayStateWith defaultRelayConfig
+
+-- | Allocate an empty relay state with explicit limits.
+newRelayStateWith :: RelayConfig -> IO RelayState
+newRelayStateWith config = do
+    rooms <- newMVar HashMap.empty
+    return RelayState
+        { relayRooms  = rooms
+        , relayConfig = config
+        }
+
+-- | WebSocket options for relay connections: cap incoming frame and message
+-- sizes so an anonymous client cannot exhaust relay memory
+-- ('WS.defaultConnectionOptions' imposes no limit at all).
+relayConnectionOptions :: RelayState -> WS.ConnectionOptions
+relayConnectionOptions RelayState{relayConfig = RelayConfig{..}} =
+    WS.defaultConnectionOptions
+        { WS.connectionFramePayloadSizeLimit = WS.SizeLimit relayMaxMessageBytes
+        , WS.connectionMessageDataSizeLimit  = WS.SizeLimit relayMaxMessageBytes
+        }
 
 -- | Parse a relay route and role from WAI path/query bytes.
 parseRelayRequest :: BS.ByteString -> BS.ByteString -> Maybe RelayRequest

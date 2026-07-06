@@ -31,6 +31,7 @@ After running the update script, `dist/index.html` must contain neither `um.can.
 - The relay is content-blind: it rewrites only the 4-byte big-endian peer-id envelope header for guest-to-host frames and never parses encrypted payloads.
 - hprox `_ws` is always cleared after parsing so hprox's global WebSocket redirect cannot steal `/r/<roomId>` upgrades.
 - hostless catch-all hprox `_rev` routes are removed after parsing because they would replace local static web-site serving. Prefix-scoped or domain-scoped reverse routes are preserved.
+- The relay caps incoming WebSocket frames and messages at 16 MiB; a client exceeding the limit is disconnected.
 
 ## Important source files
 

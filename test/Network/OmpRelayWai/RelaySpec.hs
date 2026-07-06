@@ -19,7 +19,7 @@ import Network.WebSockets       qualified as WS
 import System.Timeout           (timeout)
 import Test.Hspec
 
-import Network.OmpRelayWai (app, newRelayState)
+import Network.OmpRelayWai (RelayConfig(..), app, defaultRelayConfig, newRelayStateWith)
 
 -- | WebSocket relay integration behavior.
 spec :: Spec
@@ -89,6 +89,15 @@ spec = describe "Network.OmpRelayWai.Relay" $ do
             responseStatus response `shouldBe` status404
             responseBody response `shouldBe` "not found"
 
+    it "disconnects a client that exceeds the message size limit" $
+        withRelayConfig defaultRelayConfig { relayMaxMessageBytes = 64 * 1024 } $ \port ->
+            runClient port hostPath $ \host ->
+                runClient port guestPath $ \guest -> do
+                    expectText host "{\"t\":\"peer-joined\",\"peer\":1}"
+                    WS.sendBinaryData guest $ BS.replicate (64 * 1024 + 5) 0x41
+                    expectText host "{\"t\":\"peer-left\",\"peer\":1}"
+                    expectAbruptClose guest
+
 roomId :: String
 roomId = "AbCdEf123456_-Xy"
 
@@ -99,8 +108,11 @@ guestPath :: String
 guestPath = "/r/" <> roomId <> "?role=guest"
 
 withRelay :: (Int -> IO ()) -> IO ()
-withRelay action = do
-    state <- newRelayState
+withRelay = withRelayConfig defaultRelayConfig
+
+withRelayConfig :: RelayConfig -> (Int -> IO ()) -> IO ()
+withRelayConfig config action = do
+    state <- newRelayStateWith config
     testWithApplication (return $ app state) action
 
 runClient :: Int -> String -> WS.ClientApp a -> IO a
@@ -145,3 +157,10 @@ expectClose expectedCode expectedReason conn = do
 
 receiveDataOrClose :: WS.Connection -> IO (Either WS.ConnectionException WS.DataMessage)
 receiveDataOrClose conn = try $ WS.receiveDataMessage conn
+
+expectAbruptClose :: WS.Connection -> IO ()
+expectAbruptClose conn = do
+    result <- receiveDataOrClose conn
+    case result of
+        Left _  -> return ()
+        Right _ -> expectationFailure "expected the relay to drop the connection"
