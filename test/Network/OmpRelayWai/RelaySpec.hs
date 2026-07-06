@@ -7,6 +7,7 @@ module Network.OmpRelayWai.RelaySpec
   ) where
 
 import Control.Exception        (try)
+import Control.Monad            (forM_)
 import Data.ByteString          qualified as BS
 import Data.ByteString.Lazy     qualified as LBS
 import Data.Word                (Word16)
@@ -19,7 +20,9 @@ import Network.WebSockets       qualified as WS
 import System.Timeout           (timeout)
 import Test.Hspec
 
-import Network.OmpRelayWai (RelayConfig(..), app, defaultRelayConfig, newRelayStateWith)
+import Network.OmpRelayWai       (RelayConfig(..), app, defaultRelayConfig, newRelayStateWith)
+import Network.OmpRelayWai.Relay
+    (EnqueueResult(..), Outbound(..), enqueueOutbound, newOutboundQueue, requestClose)
 
 -- | WebSocket relay integration behavior.
 spec :: Spec
@@ -104,6 +107,61 @@ spec = describe "Network.OmpRelayWai.Relay" $ do
                 pinged <- timeout 3000000 $ waitForPing host
                 pinged `shouldBe` Just ()
 
+    it "ejects a backlogged guest without stalling the room" $ do
+        let config = defaultRelayConfig
+                { relayMaxSendQueueBytes  = 256 * 1024
+                , relayMaxSendQueueLength = 512
+                }
+        withRelayConfig config $ \port ->
+            runClient port hostPath $ \host ->
+                runClient port guestPath $ \slowGuest -> do
+                    expectText host "{\"t\":\"peer-joined\",\"peer\":1}"
+                    runClient port guestPath $ \liveGuest -> do
+                        expectText host "{\"t\":\"peer-joined\",\"peer\":2}"
+                        -- Each frame (64 KiB + 4 B header) is far below the
+                        -- 256 KiB threshold; only cumulative backlog at the
+                        -- never-reading slowGuest can overflow it.
+                        let targeted = BS.pack [0, 0, 0, 1] <> BS.replicate 65536 0x42
+                        forM_ [1 :: Int .. 512] $ \_ -> WS.sendBinaryData host targeted
+                        expectTextWithin 10000000 host "{\"t\":\"peer-left\",\"peer\":1}"
+                        let broadcast = BS.pack [0, 0, 0, 0, 7, 8, 9]
+                        WS.sendBinaryData host broadcast
+                        expectBinary liveGuest broadcast
+                        expectEventualClose slowGuest
+
+    describe "outbound backlog" $ do
+        it "admits messages until the existing backlog exceeds the byte cap" $ do
+            outbound <- newOutboundQueue defaultRelayConfig
+                { relayMaxSendQueueBytes  = 100
+                , relayMaxSendQueueLength = 8
+                }
+            let frame = OutboundBinary (BS.replicate 40 0x00)
+            results <- mapM (enqueueOutbound outbound) [frame, frame, frame, frame]
+            results `shouldBe` [Enqueued, Enqueued, Enqueued, Overflow]
+
+        it "admits one message of any size into an empty backlog" $ do
+            outbound <- newOutboundQueue defaultRelayConfig
+                { relayMaxSendQueueBytes  = 100
+                , relayMaxSendQueueLength = 8
+                }
+            result <- enqueueOutbound outbound (OutboundBinary (BS.replicate 4096 0x00))
+            result `shouldBe` Enqueued
+
+        it "overflows when the queue length cap is hit" $ do
+            outbound <- newOutboundQueue defaultRelayConfig
+                { relayMaxSendQueueBytes  = 1000000
+                , relayMaxSendQueueLength = 2
+                }
+            let msg = OutboundText "y"
+            results <- mapM (enqueueOutbound outbound) [msg, msg, msg]
+            results `shouldBe` [Enqueued, Enqueued, Overflow]
+
+        it "drops messages once a close is requested" $ do
+            outbound <- newOutboundQueue defaultRelayConfig
+            requestClose outbound 4001 "room closed"
+            result <- enqueueOutbound outbound (OutboundText "x")
+            result `shouldBe` Dropped
+
 roomId :: String
 roomId = "AbCdEf123456_-Xy"
 
@@ -170,6 +228,29 @@ expectAbruptClose conn = do
     case result of
         Left _  -> return ()
         Right _ -> expectationFailure "expected the relay to drop the connection"
+
+expectTextWithin :: Int -> WS.Connection -> BS.ByteString -> IO ()
+expectTextWithin micros conn expected = do
+    result <- timeout micros $ WS.receiveDataMessage conn
+    case result of
+        Nothing                 -> expectationFailure "timed out waiting for text message"
+        Just (WS.Text actual _) -> LBS.toStrict actual `shouldBe` expected
+        Just _                  -> expectationFailure "expected text websocket message"
+
+-- | Drain any data frames delivered before the eject, then require the
+-- connection to die. Bounded so a regression cannot hang the suite.
+expectEventualClose :: WS.Connection -> IO ()
+expectEventualClose conn = do
+    outcome <- timeout 10000000 drainUntilClose
+    case outcome of
+        Nothing -> expectationFailure "timed out waiting for the relay to drop the connection"
+        Just () -> return ()
+  where
+    drainUntilClose = do
+        result <- receiveDataOrClose conn
+        case result of
+            Left _  -> return ()
+            Right _ -> drainUntilClose
 
 waitForPing :: WS.Connection -> IO ()
 waitForPing conn = do

@@ -33,6 +33,7 @@ After running the update script, `dist/index.html` must contain neither `um.can.
 - hostless catch-all hprox `_rev` routes are removed after parsing because they would replace local static web-site serving. Prefix-scoped or domain-scoped reverse routes are preserved.
 - The relay caps incoming WebSocket frames and messages at 16 MiB; a client exceeding the limit is disconnected.
 - The relay pings every WebSocket client every 15 seconds so idle sessions survive warp's 30-second idle timeout.
+- The relay buffers outbound frames per client and force-disconnects a client whose backlog exceeds 4 MiB or 4096 messages instead of letting one slow consumer stall its room.
 
 ## Important source files
 

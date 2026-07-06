@@ -44,6 +44,7 @@ library:
   - Network.OmpRelayWai.Relay
   - Network.OmpRelayWai.Static
   dependencies:
+  - async
   - base >= 4.12 && < 5
   - bytestring
   - containers
@@ -52,6 +53,7 @@ library:
   - hprox
   - http-types
   - mime-types
+  - stm
   - text
   - time
   - unordered-containers
@@ -80,6 +82,7 @@ executables:
     - condition: flag(static)
       ghc-options: -optl-static
     dependencies:
+    - async
     - base >= 4.12 && < 5
     - bytestring
     - containers
@@ -88,6 +91,7 @@ executables:
     - hprox
     - http-types
     - mime-types
+    - stm
     - text
     - time
     - unordered-containers
@@ -118,6 +122,7 @@ tests:
     - http-client
     - http-types
     - mime-types
+    - stm
     - text
     - time
     - unordered-containers

@@ -4,36 +4,49 @@
 
 module Network.OmpRelayWai.Relay
   ( ClientRole(..)
+  , EnqueueResult(..)
+  , Outbound(..)
   , RelayConfig(..)
   , RelayRequest(..)
   , RelayState
   , RoomId(..)
   , defaultRelayConfig
+  , enqueueOutbound
+  , newOutboundQueue
   , newRelayState
   , newRelayStateWith
   , parseRelayRequest
   , relayConnectionOptions
   , relayHttpFallback
   , relayServerApp
+  , requestClose
   ) where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, withMVar)
-import Control.Exception       (finally, handle)
-import Control.Monad           (forM_, forever, when)
-import Data.ByteString         qualified as BS
-import Data.ByteString.Builder qualified as Builder
-import Data.ByteString.Lazy    qualified as LBS
-import Data.Hashable           (Hashable(..))
-import Data.HashMap.Strict     qualified as HashMap
-import Data.Int                (Int64)
-import Data.IntMap.Strict      qualified as IntMap
-import Data.List               (find)
-import Data.Unique             (Unique, newUnique)
-import Data.Word               (Word16, Word32, Word64, Word8)
-import Network.HTTP.Types      (mkStatus)
-import Network.HTTP.Types.URI  (parseQuery)
-import Network.Wai             (Application, Response, rawPathInfo, rawQueryString, responseLBS)
-import Network.WebSockets      qualified as WS
+import Control.Concurrent       (ThreadId, myThreadId, throwTo)
+import Control.Concurrent.Async (withAsync)
+import Control.Concurrent.MVar  (MVar, modifyMVar, newMVar, withMVar)
+import Control.Concurrent.STM
+    (TBQueue, TVar, atomically, check, isFullTBQueue, modifyTVar', newTBQueueIO, newTVarIO, orElse,
+    readTBQueue, readTVar, retry, writeTBQueue, writeTVar)
+import Control.Exception
+    (SomeAsyncException, SomeException, catch, finally, fromException, handle, throwIO)
+import Control.Monad            (forM_, forever, when)
+import Data.ByteString          qualified as BS
+import Data.ByteString.Builder  qualified as Builder
+import Data.ByteString.Lazy     qualified as LBS
+import Data.Hashable            (Hashable(..))
+import Data.HashMap.Strict      qualified as HashMap
+import Data.Int                 (Int64)
+import Data.IntMap.Strict       qualified as IntMap
+import Data.List                (find)
+import Data.Maybe               (isJust, isNothing)
+import Data.Unique              (Unique, newUnique)
+import Data.Word                (Word16, Word32, Word64, Word8)
+import Network.HTTP.Types       (mkStatus)
+import Network.HTTP.Types.URI   (parseQuery)
+import Network.Wai              (Application, Response, rawPathInfo, rawQueryString, responseLBS)
+import Network.WebSockets       qualified as WS
+import System.Timeout           (timeout)
 
 import Network.OmpRelayWai.Envelope
 
@@ -98,10 +111,54 @@ data RoomGuests = RoomGuests
     , roomNextPeerId :: !Word64
     }
 
+-- | Bounded outbound backlog for one client, drained by its writer thread.
+-- Carries no connection so the admission logic is testable in isolation.
+data OutboundQueue = OutboundQueue
+    { outboundQueue        :: !(TBQueue Outbound)
+    , outboundQueuedBytes  :: !(TVar Int)
+    , outboundCloseRequest :: !(TVar (Maybe (Word16, BS.ByteString)))
+      -- ^ Out-of-band close signal; the first request wins, later ones are
+      -- ignored (the benign double-close races keep their old semantics).
+    , outboundWriterDone   :: !(TVar Bool)
+      -- ^ Set by the writer on exit (close flushed, or writer died); enqueues
+      -- after this point are silently dropped.
+    , outboundMaxBytes     :: !Int
+    }
+
+-- | Outbound data frame queued for a client's writer thread.
+data Outbound = OutboundText !BS.ByteString
+              | OutboundBinary !BS.ByteString
+
+outboundLength :: Outbound -> Int
+outboundLength (OutboundText bytes)   = BS.length bytes
+outboundLength (OutboundBinary bytes) = BS.length bytes
+
+-- | Enqueue outcome; 'Overflow' means the client is too far behind and must
+-- be disconnected.
+data EnqueueResult = Enqueued | Dropped | Overflow
+  deriving (Eq, Show)
+
+-- | Allocate an empty outbound backlog sized from the relay limits.
+newOutboundQueue :: RelayConfig -> IO OutboundQueue
+newOutboundQueue RelayConfig{..} = do
+    queue        <- newTBQueueIO (fromIntegral relayMaxSendQueueLength)
+    queuedBytes  <- newTVarIO 0
+    closeRequest <- newTVarIO Nothing
+    writerDone   <- newTVarIO False
+    return OutboundQueue
+        { outboundQueue        = queue
+        , outboundQueuedBytes  = queuedBytes
+        , outboundCloseRequest = closeRequest
+        , outboundWriterDone   = writerDone
+        , outboundMaxBytes     = relayMaxSendQueueBytes
+        }
+
 data RelayClient = RelayClient
     { relayClientPeerId     :: !PeerId
     , relayClientConnection :: !WS.Connection
-    , relayClientSendLock   :: !(MVar ())
+    , relayClientThreadId   :: !ThreadId
+      -- ^ Session (receive-loop) thread; overflow policy throws here.
+    , relayClientOutbound   :: !OutboundQueue
     }
 
 -- | Allocate an empty relay state with production limits.
@@ -144,11 +201,13 @@ relayServerApp state pending =
         Nothing -> rejectNotFound pending
         Just RelayRequest{..} -> do
             conn <- WS.acceptRequest pending
-            client <- newRelayClient (PeerId 0) conn
+            threadId <- myThreadId
+            client <- newRelayClient (relayConfig state) (PeerId 0) threadId conn
             WS.withPingThread conn (relayPingIntervalSeconds (relayConfig state)) (return ()) $
-                case relayRequestRole of
-                    HostRole  -> openHost state relayRequestRoomId client
-                    GuestRole -> openGuest state relayRequestRoomId client
+                withAsync (clientWriterLoop conn (relayClientOutbound client)) $ \_ ->
+                    case relayRequestRole of
+                        HostRole  -> openHost state relayRequestRoomId client
+                        GuestRole -> openGuest state relayRequestRoomId client
 
 -- | Return the relay-specific response for non-WebSocket HTTP requests.
 relayHttpFallback :: Application
@@ -245,13 +304,14 @@ createRoom host = do
         , roomGuests = guests
         }
 
-newRelayClient :: PeerId -> WS.Connection -> IO RelayClient
-newRelayClient peerId conn = do
-    sendLock <- newMVar ()
+newRelayClient :: RelayConfig -> PeerId -> ThreadId -> WS.Connection -> IO RelayClient
+newRelayClient config peerId threadId conn = do
+    outbound <- newOutboundQueue config
     return RelayClient
         { relayClientPeerId     = peerId
         , relayClientConnection = conn
-        , relayClientSendLock   = sendLock
+        , relayClientThreadId   = threadId
+        , relayClientOutbound   = outbound
         }
 
 lookupRoom :: RelayState -> RoomId -> IO (Maybe Room)
@@ -349,31 +409,111 @@ cleanupGuest state roomId room@Room{..} RelayClient{..} = do
     when (removed && live) $
         sendTextClient roomHost $ peerLeftMessage relayClientPeerId
 
+-- | Notify a guest that its room died. Fire-and-forget: called from the
+-- host's cleanup for every guest and must never block on a slow guest.
 closeGuestForRoomClosed :: RelayClient -> IO ()
-closeGuestForRoomClosed guest =
-    sendClient guest $ \conn -> do
-        WS.sendTextData conn roomClosedMessage
-        WS.sendCloseCode conn 4001 ("room closed" :: BS.ByteString)
+closeGuestForRoomClosed RelayClient{relayClientOutbound = outbound} = do
+    _ <- enqueueOutbound outbound (OutboundText roomClosedMessage)
+    requestClose outbound 4001 "room closed"
 
 runClientUntilClose :: IO () -> IO () -> IO ()
 runClientUntilClose cleanup action =
     handleConnectionException action `finally` cleanup
 
+-- | Try to queue a message for a client's writer. Never blocks or retries.
+-- Admission checks the backlog that already exists - never the incoming
+-- message's own size - so a drained client always accepts one message of any
+-- size and the backlog exceeds 'outboundMaxBytes' by at most one message.
+-- A closing or dead client reports 'Dropped'.
+enqueueOutbound :: OutboundQueue -> Outbound -> IO EnqueueResult
+enqueueOutbound OutboundQueue{..} message = atomically $ do
+    done    <- readTVar outboundWriterDone
+    closing <- readTVar outboundCloseRequest
+    if done || isJust closing
+    then return Dropped
+    else do
+        full        <- isFullTBQueue outboundQueue
+        queuedBytes <- readTVar outboundQueuedBytes
+        if full || queuedBytes > outboundMaxBytes
+        then return Overflow
+        else do
+            writeTBQueue outboundQueue message
+            modifyTVar' outboundQueuedBytes (+ outboundLength message)
+            return Enqueued
+
+-- | Queue a message; a client whose backlog already overflowed is
+-- force-closed by throwing 'WS.ConnectionClosed' into its session thread,
+-- which unwinds through the normal cleanup path (uWS max-backpressure
+-- semantics).
+deliverOutbound :: RelayClient -> Outbound -> IO ()
+deliverOutbound client message = do
+    result <- enqueueOutbound (relayClientOutbound client) message
+    case result of
+        Overflow -> throwTo (relayClientThreadId client) WS.ConnectionClosed
+        _        -> return ()
+
 sendTextClient :: RelayClient -> BS.ByteString -> IO ()
-sendTextClient client message = sendClient client $ \conn ->
-    WS.sendTextData conn message
+sendTextClient client = deliverOutbound client . OutboundText
 
 sendBinaryClient :: RelayClient -> BS.ByteString -> IO ()
-sendBinaryClient client message = sendClient client $ \conn ->
-    WS.sendBinaryData conn message
+sendBinaryClient client = deliverOutbound client . OutboundBinary
 
+-- | Record a close request for the writer. Idempotent: the first code and
+-- reason win.
+requestClose :: OutboundQueue -> Word16 -> BS.ByteString -> IO ()
+requestClose OutboundQueue{..} code reason = atomically $ do
+    existing <- readTVar outboundCloseRequest
+    when (isNothing existing) $
+        writeTVar outboundCloseRequest (Just (code, reason))
+
+-- | Request a close and wait for the writer to flush it (bounded, so a
+-- black-holed socket cannot wedge the session thread). Call only from the
+-- client's own session thread, right before that thread finishes.
 closeClient :: RelayClient -> Word16 -> BS.ByteString -> IO ()
-closeClient client code reason = sendClient client $ \conn ->
-    WS.sendCloseCode conn code reason
+closeClient RelayClient{relayClientOutbound = outbound} code reason = do
+    requestClose outbound code reason
+    _ <- timeout closeDrainMicros $ atomically $
+        readTVar (outboundWriterDone outbound) >>= check
+    return ()
 
-sendClient :: RelayClient -> (WS.Connection -> IO ()) -> IO ()
-sendClient RelayClient{..} action = handleConnectionException $
-    withMVar relayClientSendLock $ \() -> action relayClientConnection
+-- | How long a closing session waits for its writer to flush the close frame.
+closeDrainMicros :: Int
+closeDrainMicros = 5000000
+
+-- | Drain a client's outbound backlog onto the socket. Runs as a sibling of
+-- the session thread; exits after flushing a close request or on any socket
+-- error. Drains all queued data before honoring a close request so that
+-- text-then-close sequences (room-closed) keep their order.
+clientWriterLoop :: WS.Connection -> OutboundQueue -> IO ()
+clientWriterLoop conn OutboundQueue{..} =
+    (loop `catch` rethrowAsync) `finally` markDone
+  where
+    markDone = atomically $ writeTVar outboundWriterDone True
+
+    rethrowAsync :: SomeException -> IO ()
+    rethrowAsync err = case fromException err :: Maybe SomeAsyncException of
+        Just _  -> throwIO err
+        Nothing -> return ()
+
+    loop = do
+        next <- atomically takeNext
+        case next of
+            Left message -> do
+                case message of
+                    OutboundText bytes   -> WS.sendTextData conn bytes
+                    OutboundBinary bytes -> WS.sendBinaryData conn bytes
+                loop
+            Right (code, reason) ->
+                WS.sendCloseCode conn code reason
+
+    takeNext = (Left <$> takeMessage) `orElse` (Right <$> takeCloseRequest)
+
+    takeMessage = do
+        message <- readTBQueue outboundQueue
+        modifyTVar' outboundQueuedBytes (subtract (outboundLength message))
+        return message
+
+    takeCloseRequest = readTVar outboundCloseRequest >>= maybe retry return
 
 handleConnectionException :: IO () -> IO ()
 handleConnectionException = handle ignoreConnectionException
