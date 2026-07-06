@@ -32,6 +32,7 @@ After running the update script, `dist/index.html` must contain neither `um.can.
 - hprox `_ws` is always cleared after parsing so hprox's global WebSocket redirect cannot steal `/r/<roomId>` upgrades.
 - hostless catch-all hprox `_rev` routes are removed after parsing because they would replace local static web-site serving. Prefix-scoped or domain-scoped reverse routes are preserved.
 - The relay caps incoming WebSocket frames and messages at 16 MiB; a client exceeding the limit is disconnected.
+- The relay pings every WebSocket client every 15 seconds so idle sessions survive warp's 30-second idle timeout.
 
 ## Important source files
 

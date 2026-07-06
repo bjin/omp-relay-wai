@@ -145,9 +145,10 @@ relayServerApp state pending =
         Just RelayRequest{..} -> do
             conn <- WS.acceptRequest pending
             client <- newRelayClient (PeerId 0) conn
-            case relayRequestRole of
-                HostRole  -> openHost state relayRequestRoomId client
-                GuestRole -> openGuest state relayRequestRoomId client
+            WS.withPingThread conn (relayPingIntervalSeconds (relayConfig state)) (return ()) $
+                case relayRequestRole of
+                    HostRole  -> openHost state relayRequestRoomId client
+                    GuestRole -> openGuest state relayRequestRoomId client
 
 -- | Return the relay-specific response for non-WebSocket HTTP requests.
 relayHttpFallback :: Application

@@ -98,6 +98,12 @@ spec = describe "Network.OmpRelayWai.Relay" $ do
                     expectText host "{\"t\":\"peer-left\",\"peer\":1}"
                     expectAbruptClose guest
 
+    it "pings clients at the configured interval" $
+        withRelayConfig defaultRelayConfig { relayPingIntervalSeconds = 1 } $ \port ->
+            runClient port hostPath $ \host -> do
+                pinged <- timeout 3000000 $ waitForPing host
+                pinged `shouldBe` Just ()
+
 roomId :: String
 roomId = "AbCdEf123456_-Xy"
 
@@ -164,3 +170,10 @@ expectAbruptClose conn = do
     case result of
         Left _  -> return ()
         Right _ -> expectationFailure "expected the relay to drop the connection"
+
+waitForPing :: WS.Connection -> IO ()
+waitForPing conn = do
+    message <- WS.receive conn
+    case message of
+        WS.ControlMessage (WS.Ping _) -> return ()
+        _                             -> waitForPing conn
