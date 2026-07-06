@@ -29,7 +29,7 @@ import Control.Concurrent.STM
     (TBQueue, TVar, atomically, check, isFullTBQueue, modifyTVar', newTBQueueIO, newTVarIO, orElse,
     readTBQueue, readTVar, retry, writeTBQueue, writeTVar)
 import Control.Exception
-    (SomeAsyncException, SomeException, catch, finally, fromException, handle, throwIO)
+    (SomeAsyncException, SomeException, catch, finally, fromException, handle, mask, throwIO)
 import Control.Monad            (forM_, forever, when)
 import Data.ByteString          qualified as BS
 import Data.ByteString.Builder  qualified as Builder
@@ -260,36 +260,38 @@ parseRole query = do
         _                 -> Nothing
 
 openHost :: RelayState -> RoomId -> RelayClient -> IO ()
-openHost state@RelayState{..} roomId host = do
+openHost state@RelayState{..} roomId host = mask $ \restore -> do
     room <- createRoom host
     inserted <- modifyMVar relayRooms $ \rooms ->
         if HashMap.member roomId rooms
         then return (rooms, False)
         else return (HashMap.insert roomId room rooms, True)
     if inserted
-    then runClientUntilClose (cleanupHost state roomId room) $ hostReceiveLoop room
-    else closeClient host 4009 "a host is already connected for this room"
+    then restore (handleConnectionException (hostReceiveLoop room))
+            `finally` cleanupHost state roomId room
+    else restore (closeClient host 4009 "a host is already connected for this room")
 
 openGuest :: RelayState -> RoomId -> RelayClient -> IO ()
 openGuest state roomId client = do
     room <- lookupRoom state roomId
     case room of
         Nothing -> closeClient client 4004 "no such room"
-        Just liveRoom -> do
+        Just liveRoom -> mask $ \restore -> do
             guest <- insertGuest liveRoom client
             case guest of
-                Nothing -> closeClient client 1011 "peer id exhausted"
-                Just guestClient -> do
-                    live <- roomStillLive state roomId liveRoom
-                    if live
-                    then do
-                        sendTextClient (roomHost liveRoom) $
-                            peerJoinedMessage (relayClientPeerId guestClient)
-                        runClientUntilClose (cleanupGuest state roomId liveRoom guestClient) $
-                            guestReceiveLoop liveRoom guestClient
-                    else do
-                        removeGuestSilently liveRoom guestClient
-                        closeClient guestClient 4001 "room closed"
+                Nothing -> restore $ closeClient client 1011 "peer id exhausted"
+                Just guestClient ->
+                    restore (handleConnectionException (guestSession state roomId liveRoom guestClient))
+                        `finally` cleanupGuest state roomId liveRoom guestClient
+
+guestSession :: RelayState -> RoomId -> Room -> RelayClient -> IO ()
+guestSession state roomId room guest = do
+    live <- roomStillLive state roomId room
+    if live
+    then do
+        sendTextClient (roomHost room) $ peerJoinedMessage (relayClientPeerId guest)
+        guestReceiveLoop room guest
+    else closeClient guest 4001 "room closed"
 
 createRoom :: RelayClient -> IO Room
 createRoom host = do
@@ -336,13 +338,6 @@ insertGuest Room{..} client = modifyMVar roomGuests $ \guests@RoomGuests{..} ->
                 , roomNextPeerId = roomNextPeerId + 1
                 }
         return (nextGuests, Just guest)
-
-removeGuestSilently :: Room -> RelayClient -> IO ()
-removeGuestSilently Room{..} RelayClient{..} = modifyMVar roomGuests $ \guests@RoomGuests{..} ->
-    let nextGuests = guests
-            { roomGuestMap = IntMap.delete (peerIdKey relayClientPeerId) roomGuestMap
-            }
-    in return (nextGuests, ())
 
 hostReceiveLoop :: Room -> IO ()
 hostReceiveLoop room@Room{..} = forever $ do
@@ -415,10 +410,6 @@ closeGuestForRoomClosed :: RelayClient -> IO ()
 closeGuestForRoomClosed RelayClient{relayClientOutbound = outbound} = do
     _ <- enqueueOutbound outbound (OutboundText roomClosedMessage)
     requestClose outbound 4001 "room closed"
-
-runClientUntilClose :: IO () -> IO () -> IO ()
-runClientUntilClose cleanup action =
-    handleConnectionException action `finally` cleanup
 
 -- | Try to queue a message for a client's writer. Never blocks or retries.
 -- Admission checks the backlog that already exists - never the incoming
