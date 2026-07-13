@@ -1,5 +1,5 @@
 name:                omp-relay-wai
-version:             0.0.1
+version:             0.1.0
 github:              "bjin/omp-relay-wai"
 license:             Apache-2.0
 author:              "Bin Jin"
