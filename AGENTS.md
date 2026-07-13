@@ -41,7 +41,7 @@ After running the update script, `dist/index.html` must contain neither `um.can.
 - `src/Network/OmpRelayWai/Relay.hs` implements relay routing, room state, peer join/leave controls, close codes, and binary forwarding.
 - `src/Network/OmpRelayWai/Envelope.hs` implements the 4-byte peer-id envelope.
 - `src/Network/OmpRelayWai/Static.hs` serves `/healthz` and embedded generated `dist/` assets.
-- `src/Network/OmpRelayWai/HProxConfig.hs` sanitizes hprox config after parsing.
+- `app/Network/OmpRelayWai/HProxConfig.hs` sanitizes hprox configuration for the executable.
 - `app/Main.hs` wires hprox to this WAI app and prints sanitizer warnings.
 - `scripts/update-webui.sh` initializes/builds the pinned `omp/` submodule with `omp-patches/` applied.
 
@@ -71,7 +71,6 @@ stack test
 Useful targeted checks:
 
 ```sh
-stack test omp-relay-wai:omp-relay-wai-test --fast --test-arguments='--match HProxConfig'
 stack build --pedantic
 stack exec omp-relay-wai -- --help
 ```

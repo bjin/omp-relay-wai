@@ -8,15 +8,13 @@ module Main
 
 import Test.Hspec
 
-import Network.OmpRelayWai.EnvelopeSpec    qualified as EnvelopeSpec
-import Network.OmpRelayWai.HProxConfigSpec qualified as HProxConfigSpec
-import Network.OmpRelayWai.RelaySpec       qualified as RelaySpec
-import Network.OmpRelayWai.StaticSpec      qualified as StaticSpec
+import Network.OmpRelayWai.EnvelopeSpec qualified as EnvelopeSpec
+import Network.OmpRelayWai.RelaySpec    qualified as RelaySpec
+import Network.OmpRelayWai.StaticSpec   qualified as StaticSpec
 
 -- | Test suite entry point.
 main :: IO ()
 main = hspec $ do
     EnvelopeSpec.spec
-    HProxConfigSpec.spec
     RelaySpec.spec
     StaticSpec.spec
