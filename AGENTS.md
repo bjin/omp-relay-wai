@@ -8,11 +8,11 @@ The executable reuses hprox CLI parsing and runtime behavior (`Network.HProx.get
 
 ## Runtime behavior
 
-- Static site assets are generated into `dist/` by `scripts/update-webui.sh`; `dist/` is ignored and intentionally not tracked.
+- Static site assets are generated into `webui/` by `scripts/update-webui.sh`; `webui/` is ignored and intentionally not tracked.
 - `omp/` is a pinned git submodule for `can1357/oh-my-pi`; local source changes are stored as tracked patches in `omp-patches/`.
-- `dist/` is a compile-time input embedded into the binary by `file-embed`. Deployed servers only need the compiled executable; refreshing assets requires rerunning `scripts/update-webui.sh` and rebuilding.
+- `webui/` is a compile-time input embedded into the binary by `file-embed`. Deployed servers only need the compiled executable; refreshing assets requires rerunning `scripts/update-webui.sh` and rebuilding.
 
-Generate `dist/` after a fresh checkout or when refreshing web assets:
+Generate `webui/` after a fresh checkout or when refreshing web assets:
 
 ```sh
 git submodule update --init -- omp
@@ -23,7 +23,7 @@ scripts/update-webui.sh --release # first move omp/ to latest v*.*.* release tag
 
 Regenerate local patch files with `scripts/prepare-patchess.py`; it resets `omp/`, rewrites the local customizations, writes `omp-patches/*.patch`, then resets `omp/` back to a clean checkout.
 
-After running the update script, `dist/index.html` must contain neither `um.can.ac` nor `https://my.omp.sh/`, `dist/robots.txt` must contain no `my.omp.sh`, and `dist/sitemap.xml` must not exist.
+After running the update script, `webui/index.html` must contain neither `um.can.ac` nor `https://my.omp.sh/`, `webui/robots.txt` must contain no `my.omp.sh`, and `webui/sitemap.xml` must not exist.
 
 - The public WAI app is `Network.OmpRelayWai.app`.
 - WebSocket relay routes are `/r/<roomId>?role=host` and `/r/<roomId>?role=guest`.
@@ -40,7 +40,7 @@ After running the update script, `dist/index.html` must contain neither `um.can.
 - `src/Network/OmpRelayWai.hs` composes WebSocket relay and HTTP static fallback.
 - `src/Network/OmpRelayWai/Relay.hs` implements relay routing, room state, peer join/leave controls, close codes, and binary forwarding.
 - `src/Network/OmpRelayWai/Envelope.hs` implements the 4-byte peer-id envelope.
-- `src/Network/OmpRelayWai/Static.hs` serves `/healthz` and embedded generated `dist/` assets.
+- `src/Network/OmpRelayWai/Static.hs` serves `/healthz` and embedded generated `webui/` assets.
 - `app/Network/OmpRelayWai/HProxConfig.hs` sanitizes hprox configuration for the executable.
 - `app/Main.hs` wires hprox to this WAI app and prints sanitizer warnings.
 - `scripts/update-webui.sh` initializes/builds the pinned `omp/` submodule with `omp-patches/` applied.

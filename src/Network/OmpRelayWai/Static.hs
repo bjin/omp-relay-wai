@@ -24,7 +24,7 @@ import Network.Mime          (defaultMimeLookup)
 import Network.Wai           (Application, Request, Response, pathInfo, requestMethod, responseLBS)
 
 embeddedDistFiles :: [(FilePath, BS.ByteString)]
-embeddedDistFiles = $(makeRelativeToProject "dist" >>= embedDir)
+embeddedDistFiles = $(makeRelativeToProject "webui" >>= embedDir)
 
 data EmbeddedFile = EmbeddedFile
     { embeddedFileContent :: !LBS.ByteString

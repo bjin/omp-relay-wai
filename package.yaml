@@ -11,6 +11,8 @@ category:            Web
 
 description:
   WAI application and hprox-compatible binary for the oh-my-pi collab relay.
+data-files:
+- webui/**/*
 
 flags:
   static:

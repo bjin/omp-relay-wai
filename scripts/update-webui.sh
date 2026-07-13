@@ -23,7 +23,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/update-webui.sh [--master|--release]
 
-Build dist/ from the pinned omp/ submodule commit by default.
+Build webui/ from the pinned omp/ submodule commit by default.
 
 Options:
   --master   update omp/ to the latest upstream default branch commit
@@ -147,31 +147,31 @@ apply_patches() {
   done
 }
 
-validate_dist() {
-  python3 - "$repo_root/dist" <<'PY'
+validate_webui() {
+  python3 - "$repo_root/webui" <<'PY'
 from pathlib import Path
 import sys
 
-dist = Path(sys.argv[1])
-index_path = dist / "index.html"
-robots_path = dist / "robots.txt"
-sitemap_path = dist / "sitemap.xml"
+webui = Path(sys.argv[1])
+index_path = webui / "index.html"
+robots_path = webui / "robots.txt"
+sitemap_path = webui / "sitemap.xml"
 
 failures = []
 
 if not index_path.is_file():
-    failures.append("dist/index.html is missing")
+    failures.append("webui/index.html is missing")
 else:
     index = index_path.read_text(encoding="utf-8")
     if "um.can.ac" in index:
-        failures.append("dist/index.html still contains um.can.ac")
+        failures.append("webui/index.html still contains um.can.ac")
     if "https://my.omp.sh/" in index:
-        failures.append("dist/index.html still contains https://my.omp.sh/")
+        failures.append("webui/index.html still contains https://my.omp.sh/")
 
 if robots_path.exists() and "my.omp.sh" in robots_path.read_text(encoding="utf-8"):
-    failures.append("dist/robots.txt still contains my.omp.sh")
+    failures.append("webui/robots.txt still contains my.omp.sh")
 if sitemap_path.exists():
-    failures.append("dist/sitemap.xml still exists")
+    failures.append("webui/sitemap.xml still exists")
 
 if failures:
     for failure in failures:
@@ -203,8 +203,8 @@ apply_patches
 cmd bun install --cwd "$omp_dir" --frozen-lockfile --ignore-scripts
 cmd bun --cwd="$omp_dir/packages/collab-web" run build
 
-cmd rm -rf "$repo_root/dist"
-cmd mkdir -p "$repo_root/dist"
-cmd cp -a "$collab_dist/." "$repo_root/dist/"
+cmd rm -rf "$repo_root/webui"
+cmd mkdir -p "$repo_root/webui"
+cmd cp -a "$collab_dist/." "$repo_root/webui/"
 
-validate_dist
+validate_webui
