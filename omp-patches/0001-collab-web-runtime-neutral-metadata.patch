@@ -1,5 +1,5 @@
 diff --git a/packages/collab-web/index.html b/packages/collab-web/index.html
-index 12e868d3f..ce1d77aa9 100644
+index 12e868d3f80fb4a468352530485fa169bb0ab68e..ce1d77aa9cd13d3279ca9d6afd54bd6d17d209de 100644
 --- a/packages/collab-web/index.html
 +++ b/packages/collab-web/index.html
 @@ -13,7 +13,6 @@
@@ -59,7 +59,7 @@ index 12e868d3f..ce1d77aa9 100644
  	<body>
  		<div id="root"></div>
 diff --git a/packages/collab-web/public/robots.txt b/packages/collab-web/public/robots.txt
-index 66fafa979..b6e4d7b0c 100644
+index 66fafa979d2b60099568817ca903cd2282de3787..b6e4d7b0cefa1123b92e55ad9c7451dd58e91632 100644
 --- a/packages/collab-web/public/robots.txt
 +++ b/packages/collab-web/public/robots.txt
 @@ -2,4 +2,4 @@ User-agent: *
@@ -70,7 +70,7 @@ index 66fafa979..b6e4d7b0c 100644
 +# Sitemap intentionally omitted: deployment host is selected at runtime.
 diff --git a/packages/collab-web/public/sitemap.xml b/packages/collab-web/public/sitemap.xml
 deleted file mode 100644
-index c6fa474c0..000000000
+index c6fa474c00971bddbf029b00bd5939d57f01caa4..0000000000000000000000000000000000000000
 --- a/packages/collab-web/public/sitemap.xml
 +++ /dev/null
 @@ -1,8 +0,0 @@

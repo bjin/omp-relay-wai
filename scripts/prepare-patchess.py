@@ -90,6 +90,7 @@ def write_patch() -> None:
         str(OMP_DIR),
         "diff",
         "--binary",
+        "--full-index",
         "--",
         "packages/collab-web/index.html",
         "packages/collab-web/public/robots.txt",
