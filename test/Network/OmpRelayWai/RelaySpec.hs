@@ -6,6 +6,7 @@ module Network.OmpRelayWai.RelaySpec
   ( spec
   ) where
 
+import Control.Concurrent       (threadDelay)
 import Control.Exception        (try)
 import Control.Monad            (forM_)
 import Data.ByteString          qualified as BS
@@ -107,6 +108,38 @@ spec = describe "Network.OmpRelayWai.Relay" $ do
                 pinged <- timeout 3000000 $ waitForPing host
                 pinged `shouldBe` Just ()
 
+    it "retires a client that stops answering pings so its host can reclaim the room" $
+        withRelayConfig livenessConfig $ \port ->
+            -- Never reads, so the client never answers the relay's pings.
+            runClient port hostPath $ \_silentHost ->
+                runClient port guestPath $ \guest -> do
+                    expectTextWithin 5000000 guest "{\"t\":\"room-closed\"}"
+                    expectClose 4001 "room closed" guest
+                    runClient port hostPath $ \host ->
+                        runClient port guestPath $ \_guest ->
+                            expectText host "{\"t\":\"peer-joined\",\"peer\":1}"
+
+    it "keeps an idle client that answers pings" $
+        withRelayConfig livenessConfig $ \port ->
+            runClient port hostPath $ \host -> do
+                -- Blocking in receive answers the relay's pings.
+                expectNoDataMessageFor 4000000 host
+                runClient port guestPath $ \_guest ->
+                    expectText host "{\"t\":\"peer-joined\",\"peer\":1}"
+
+    it "keeps a client that keeps sending while its pongs are delayed" $
+        withRelayConfig livenessConfig $ \port ->
+            runClient port hostPath $ \host ->
+                runClient port guestPath $ \guest -> do
+                    expectText host "{\"t\":\"peer-joined\",\"peer\":1}"
+                    -- The host stops reading (and answering pings) for twice
+                    -- the liveness timeout; only its data frames prove it alive.
+                    let broadcast = BS.pack [0, 0, 0, 0, 7]
+                    forM_ [1 :: Int .. 8] $ \_ -> do
+                        WS.sendBinaryData host broadcast
+                        expectBinary guest broadcast
+                        threadDelay 500000
+
     it "ejects a backlogged guest without stalling the room" $ do
         let config = defaultRelayConfig
                 { relayMaxSendQueueBytes  = 256 * 1024
@@ -174,6 +207,12 @@ guestPath = "/r/" <> roomId <> "?role=guest"
 withRelay :: (Int -> IO ()) -> IO ()
 withRelay = withRelayConfig defaultRelayConfig
 
+livenessConfig :: RelayConfig
+livenessConfig = defaultRelayConfig
+    { relayPingIntervalSeconds    = 1
+    , relayLivenessTimeoutSeconds = 2
+    }
+
 withRelayConfig :: RelayConfig -> (Int -> IO ()) -> IO ()
 withRelayConfig config action = do
     state <- newRelayStateWith config
@@ -203,8 +242,11 @@ expectBinary conn expected = do
         _                -> expectationFailure "expected binary websocket message"
 
 expectNoDataMessage :: WS.Connection -> IO ()
-expectNoDataMessage conn = do
-    message <- timeout 100000 $ WS.receiveDataMessage conn
+expectNoDataMessage = expectNoDataMessageFor 100000
+
+expectNoDataMessageFor :: Int -> WS.Connection -> IO ()
+expectNoDataMessageFor micros conn = do
+    message <- timeout micros $ WS.receiveDataMessage conn
     case message of
         Nothing -> return ()
         Just _  -> expectationFailure "received unexpected websocket message"

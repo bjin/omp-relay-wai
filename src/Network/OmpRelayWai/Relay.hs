@@ -22,31 +22,33 @@ module Network.OmpRelayWai.Relay
   , requestClose
   ) where
 
-import Control.Concurrent       (ThreadId, myThreadId, throwTo)
-import Control.Concurrent.Async (withAsync)
-import Control.Concurrent.MVar  (MVar, modifyMVar, newMVar, withMVar)
+import Control.Concurrent            (ThreadId, myThreadId, throwTo)
+import Control.Concurrent.Async      (withAsync)
+import Control.Concurrent.MVar       (MVar, modifyMVar, newMVar, takeMVar, tryPutMVar, withMVar)
 import Control.Concurrent.STM
     (TBQueue, TVar, atomically, check, isFullTBQueue, modifyTVar', newTBQueueIO, newTVarIO, orElse,
     readTBQueue, readTVar, retry, writeTBQueue, writeTVar)
 import Control.Exception
     (SomeAsyncException, SomeException, catch, finally, fromException, handle, mask, throwIO)
-import Control.Monad            (forM_, forever, when)
-import Data.ByteString          qualified as BS
-import Data.ByteString.Builder  qualified as Builder
-import Data.ByteString.Lazy     qualified as LBS
-import Data.Hashable            (Hashable(..))
-import Data.HashMap.Strict      qualified as HashMap
-import Data.Int                 (Int64)
-import Data.IntMap.Strict       qualified as IntMap
-import Data.List                (find)
-import Data.Maybe               (isJust, isNothing)
-import Data.Unique              (Unique, newUnique)
-import Data.Word                (Word16, Word32, Word64, Word8)
-import Network.HTTP.Types       (mkStatus)
-import Network.HTTP.Types.URI   (parseQuery)
-import Network.Wai              (Application, Response, rawPathInfo, rawQueryString, responseLBS)
-import Network.WebSockets       qualified as WS
-import System.Timeout           (timeout)
+import Control.Monad                 (forM_, forever, when)
+import Data.ByteString               qualified as BS
+import Data.ByteString.Builder       qualified as Builder
+import Data.ByteString.Lazy          qualified as LBS
+import Data.Hashable                 (Hashable(..))
+import Data.HashMap.Strict           qualified as HashMap
+import Data.Int                      (Int64)
+import Data.IntMap.Strict            qualified as IntMap
+import Data.List                     (find)
+import Data.Maybe                    (isJust, isNothing)
+import Data.Unique                   (Unique, newUnique)
+import Data.Word                     (Word16, Word32, Word64, Word8)
+import Network.HTTP.Types            (mkStatus)
+import Network.HTTP.Types.URI        (parseQuery)
+import Network.Wai
+    (Application, Response, rawPathInfo, rawQueryString, responseLBS)
+import Network.WebSockets            qualified as WS
+import Network.WebSockets.Connection (connectionHeartbeat)
+import System.Timeout                (timeout)
 
 import Network.OmpRelayWai.Envelope
 
@@ -59,16 +61,22 @@ data RelayState = RelayState
 -- | Tunable relay limits. Production uses 'defaultRelayConfig'; tests shrink
 -- the values to exercise limit behavior quickly.
 data RelayConfig = RelayConfig
-    { relayPingIntervalSeconds :: !Int
+    { relayPingIntervalSeconds    :: !Int
       -- ^ Server-initiated WebSocket ping period. Must stay well below warp's
       -- 30-second slowloris timeout, which stays armed during raw sessions.
-    , relayMaxMessageBytes     :: !Int64
+    , relayLivenessTimeoutSeconds :: !Int
+      -- ^ Disconnect a client that sent neither a pong nor a data message for
+      -- this long; must exceed 'relayPingIntervalSeconds'. Relay pings keep
+      -- warp's timeout refreshed, so without this check a peer that vanished
+      -- without a FIN would hold its room until TCP gives up, and a host
+      -- reconnecting after a network drop could never reclaim that room.
+    , relayMaxMessageBytes        :: !Int64
       -- ^ Incoming frame and message size limit (matches Bun's default
       -- @maxPayloadLength@ on the reference relay).
-    , relayMaxSendQueueBytes   :: !Int
+    , relayMaxSendQueueBytes      :: !Int
       -- ^ Per-client outbound backlog cap in payload bytes; exceeding it
       -- force-disconnects the client (uWS @maxBackpressure@ analog).
-    , relayMaxSendQueueLength  :: !Int
+    , relayMaxSendQueueLength     :: !Int
       -- ^ Per-client outbound backlog cap in messages.
     }
   deriving (Eq, Show)
@@ -76,10 +84,11 @@ data RelayConfig = RelayConfig
 -- | Production relay limits.
 defaultRelayConfig :: RelayConfig
 defaultRelayConfig = RelayConfig
-    { relayPingIntervalSeconds = 15
-    , relayMaxMessageBytes     = 16 * 1024 * 1024
-    , relayMaxSendQueueBytes   = 4 * 1024 * 1024
-    , relayMaxSendQueueLength  = 4096
+    { relayPingIntervalSeconds    = 15
+    , relayLivenessTimeoutSeconds = 45
+    , relayMaxMessageBytes        = 16 * 1024 * 1024
+    , relayMaxSendQueueBytes      = 4 * 1024 * 1024
+    , relayMaxSendQueueLength     = 4096
     }
 
 -- | Room key accepted in @/r/<roomId>@ relay routes.
@@ -202,12 +211,15 @@ relayServerApp state pending =
         Just RelayRequest{..} -> do
             conn <- WS.acceptRequest pending
             threadId <- myThreadId
-            client <- newRelayClient (relayConfig state) (PeerId 0) threadId conn
-            WS.withPingThread conn (relayPingIntervalSeconds (relayConfig state)) (return ()) $
-                withAsync (clientWriterLoop conn (relayClientOutbound client)) $ \_ ->
-                    case relayRequestRole of
-                        HostRole  -> openHost state relayRequestRoomId client
-                        GuestRole -> openGuest state relayRequestRoomId client
+            client <- newRelayClient config (PeerId 0) threadId conn
+            WS.withPingThread conn (relayPingIntervalSeconds config) (return ()) $
+                withAsync (livenessWatchdog config client) $ \_ ->
+                    withAsync (clientWriterLoop conn (relayClientOutbound client)) $ \_ ->
+                        case relayRequestRole of
+                            HostRole  -> openHost state relayRequestRoomId client
+                            GuestRole -> openGuest state relayRequestRoomId client
+  where
+    config = relayConfig state
 
 -- | Return the relay-specific response for non-WebSocket HTTP requests.
 relayHttpFallback :: Application
@@ -341,17 +353,26 @@ insertGuest Room{..} client = modifyMVar roomGuests $ \guests@RoomGuests{..} ->
 
 hostReceiveLoop :: Room -> IO ()
 hostReceiveLoop room@Room{..} = forever $ do
-    message <- WS.receiveDataMessage $ relayClientConnection roomHost
+    message <- receiveClientMessage roomHost
     case message of
         WS.Text _ _   -> return ()
         WS.Binary raw -> handleHostBinary room $ LBS.toStrict raw
 
 guestReceiveLoop :: Room -> RelayClient -> IO ()
 guestReceiveLoop room guest = forever $ do
-    message <- WS.receiveDataMessage $ relayClientConnection guest
+    message <- receiveClientMessage guest
     case message of
         WS.Text _ _   -> return ()
         WS.Binary raw -> handleGuestBinary room guest $ LBS.toStrict raw
+
+-- | Receive the next data message. Like a pong (which the websockets library
+-- records itself), any complete inbound message proves the peer alive for
+-- 'livenessWatchdog', so a peer whose pong queues behind a long upload is kept.
+receiveClientMessage :: RelayClient -> IO WS.DataMessage
+receiveClientMessage RelayClient{relayClientConnection = conn} = do
+    message <- WS.receiveDataMessage conn
+    _ <- tryPutMVar (connectionHeartbeat conn) ()
+    return message
 
 handleHostBinary :: Room -> BS.ByteString -> IO ()
 handleHostBinary Room{..} message =
@@ -470,6 +491,21 @@ closeClient RelayClient{relayClientOutbound = outbound} code reason = do
 -- | How long a closing session waits for its writer to flush the close frame.
 closeDrainMicros :: Int
 closeDrainMicros = 5000000
+
+-- | Force-close a client that shows no sign of life for
+-- 'relayLivenessTimeoutSeconds' by throwing 'WS.ConnectionClosed' into its
+-- session thread, the same unwinding path as a backlog overflow. Runs as a
+-- sibling of the session thread and fires at most once.
+livenessWatchdog :: RelayConfig -> RelayClient -> IO ()
+livenessWatchdog RelayConfig{..} RelayClient{..} = loop
+  where
+    loop = do
+        alive <- timeout (relayLivenessTimeoutSeconds * 1000000) $ takeMVar heartbeat
+        case alive of
+            Just () -> loop
+            Nothing -> throwTo relayClientThreadId WS.ConnectionClosed
+
+    heartbeat = connectionHeartbeat relayClientConnection
 
 -- | Drain a client's outbound backlog onto the socket. Runs as a sibling of
 -- the session thread; exits after flushing a close request or on any socket
