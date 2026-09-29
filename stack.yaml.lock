@@ -25,17 +25,6 @@ packages:
     subdir: warp
     url: https://github.com/bjin/wai/archive/warp-3.4.13-patched.tar.gz
 - completed:
-    name: quic
-    pantry-tree:
-      sha256: b814ddf00bdb97416edb0f413d037b1bc9c7e5ee94ea84cd3a95ee802ca07ec7
-      size: 8185
-    sha256: dd5a070abff96e6a507c4ac92d6aa408d49c66f6be91a2d6a961bd412ba59b35
-    size: 226436
-    url: https://github.com/bjin/quic/archive/fix-invalid-final-size-minimal.tar.gz
-    version: 0.3.2
-  original:
-    url: https://github.com/bjin/quic/archive/fix-invalid-final-size-minimal.tar.gz
-- completed:
     hackage: crypto-token-0.2.0@sha256:9b71882992548e489c0c176d1cd94025dc9fb91eafb49d2c50e53dd41aba06bb,1238
     pantry-tree:
       sha256: 92f270726426e2be3f3b01cb576bb8f13ebe38a749fe4493d9afb05e6e72a87f
@@ -161,6 +150,13 @@ packages:
       size: 284
   original:
     hackage: network-udp-0.0.0
+- completed:
+    hackage: quic-0.3.3@sha256:6d52df75e5e68ddee984ab3b39e09326a9fe6fc54496515a51b9ec4e59f33aa8,7365
+    pantry-tree:
+      sha256: 31028e73612326c5f9b6e91a0b9a7a93268f350a8ae8154e01bd6c246a2dec31
+      size: 7745
+  original:
+    hackage: quic-0.3.3
 - completed:
     hackage: ram-0.22.0@sha256:f6ce64a025929eb6ce42deeb80d072960a9ea2d83b9b9b28de668cc2b623127c,2814
     pantry-tree:
