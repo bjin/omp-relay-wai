@@ -1,11 +1,11 @@
 diff --git a/packages/collab-web/index.html b/packages/collab-web/index.html
-index 12e868d3f80fb4a468352530485fa169bb0ab68e..ce1d77aa9cd13d3279ca9d6afd54bd6d17d209de 100644
+index 10fac53c88b7baf5fb4aee77fa3dc133333bc8f3..65bf74339652f7ef3bc94defacd642ee0f3b628b 100644
 --- a/packages/collab-web/index.html
 +++ b/packages/collab-web/index.html
 @@ -13,7 +13,6 @@
  			content="Guest client for omp collab sessions: watch a live coding-agent session — streaming transcript, tool calls, subagents — and prompt the host agent from any browser. End-to-end encrypted; the room key never leaves the URL fragment."
  		/>
- 		<meta name="author" content="can1357" />
+ 		<meta name="author" content="Stencil Labs" />
 -		<link rel="canonical" href="https://my.omp.sh/" />
  		<meta name="robots" content="index, follow, max-image-preview:large" />
  
@@ -25,7 +25,7 @@ index 12e868d3f80fb4a468352530485fa169bb0ab68e..ce1d77aa9cd13d3279ca9d6afd54bd6d
  		<meta property="og:image:type" content="image/png" />
  		<meta property="og:image:width" content="1200" />
  		<meta property="og:image:height" content="630" />
-@@ -42,31 +40,14 @@
+@@ -42,39 +40,14 @@
  
  		<!-- Twitter / X -->
  		<meta name="twitter:card" content="summary_large_image" />
@@ -49,7 +49,15 @@ index 12e868d3f80fb4a468352530485fa169bb0ab68e..ce1d77aa9cd13d3279ca9d6afd54bd6d
 -				"applicationCategory": "DeveloperApplication",
 -				"operatingSystem": "Any",
 -				"description": "Browser guest client for omp collab live sessions: streaming transcript, tool calls, subagent panel, and a composer that prompts the host agent. End-to-end encrypted.",
--				"isPartOf": { "@type": "WebSite", "name": "omp", "url": "https://omp.sh/" }
+-				"isPartOf": { "@type": "WebSite", "name": "omp", "url": "https://omp.sh/" },
+-				"publisher": {
+-					"@type": "Organization",
+-					"@id": "https://stencil.so/#organization",
+-					"name": "Stencil",
+-					"legalName": "Stencil Labs, Inc.",
+-					"alternateName": "Stencil Labs",
+-					"url": "https://stencil.so/"
+-				}
 -			}
 -		</script>
 -
