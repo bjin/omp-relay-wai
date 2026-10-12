@@ -6,3 +6,4 @@
 /.hpack/
 /omp-relay-wai.cabal
 !/stack.yaml.lock
+/scripts/node_modules/

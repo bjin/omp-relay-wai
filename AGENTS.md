@@ -76,3 +76,13 @@ stack build --pedantic
 stack exec omp-relay-wai -- --help
 ```
 
+CI uses the latest stable Bun and checks the built executable with Happy DOM before
+packaging: embedded assets must execute without errors and render the join form.
+No browser is installed; this does not verify layout or browser compatibility.
+For a trusted local server (the check executes its JavaScript):
+
+```sh
+bun install --cwd scripts --frozen-lockfile --ignore-scripts
+bun scripts/check-webui.mjs http://127.0.0.1:8080/
+```
+
